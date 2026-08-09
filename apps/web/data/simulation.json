@@ -1,0 +1,176 @@
+{
+  "org": { "name": "Acme Eng", "slug": "acme" },
+  "currentUserId": "usr_dana",
+  "config": { "nextPr": 851, "clockSpeed": 1 },
+
+  "members": [
+    { "id": "usr_dana", "kind": "human", "name": "Dana Kim", "handle": "dana", "initials": "DK", "role": "Admin", "access": "admin" },
+    { "id": "usr_ravi", "kind": "human", "name": "Ravi S.", "handle": "ravi", "initials": "RS", "role": "Operator", "access": "operator" },
+    { "id": "usr_mira", "kind": "human", "name": "Mira T.", "handle": "mira", "initials": "MT", "role": "Operator", "access": "operator" },
+    { "id": "agt_ship", "kind": "agent", "name": "ShipBot", "handle": "shipbot", "initials": "SB", "role": "Coding agent" },
+    { "id": "agt_fix", "kind": "agent", "name": "FixBot", "handle": "fixbot", "initials": "FX", "role": "Coding agent" }
+  ],
+
+  "connections": [
+    { "id": "conn_gh", "provider": "github", "category": "execution", "displayName": "GitHub", "status": "connected", "accountLabel": "acme", "scopeSummary": "3 repositories", "lastSyncedLabel": "synced 2m ago" },
+    { "id": "conn_cr", "provider": "coderabbit", "category": "code-review", "displayName": "CodeRabbit", "status": "connected", "accountLabel": "acme", "scopeSummary": "reviews all PRs", "lastSyncedLabel": "active" },
+    { "id": "conn_slack", "provider": "slack", "category": "communication", "displayName": "Slack", "status": "not_configured", "scopeSummary": "notify approvals & blocks" }
+  ],
+
+  "repos": [
+    {
+      "id": "repo_api", "slug": "acme/api", "defaultBranch": "main", "connected": false, "agentId": "agt_ship",
+      "seedRuns": [
+        {
+          "id": "run_841", "title": "Stream chat responses instead of one blob", "runState": "AWAITING_HUMAN",
+          "agentId": "agt_ship", "requestedById": "usr_dana", "prNumber": 841, "headSha": "3f9a1c2", "verdictId": "vd_841", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 214, "total": 214 },
+          "review": { "state": "approved", "rounds": 2, "reviewer": "CodeRabbit" },
+          "diffStat": { "additions": 142, "deletions": 38, "files": 6 },
+          "ageMinutes": 4,
+          "milestones": [
+            { "kind": "pick", "text": "Picked up · cloned acme/api, read the task", "atMinutes": 16 },
+            { "kind": "pr", "text": "Opened PR #841 — “Stream tokens as they arrive”", "atMinutes": 11 },
+            { "kind": "ci", "text": "CI green · 214 tests, incl. a new streaming test", "atMinutes": 9 },
+            { "kind": "review", "text": "Review round 1 — addressed 2 comments", "atMinutes": 6 },
+            { "kind": "review", "text": "Review approved by CodeRabbit", "atMinutes": 4 },
+            { "kind": "ready", "text": "Ready for approval", "atMinutes": 4 }
+          ],
+          "pending": []
+        },
+        {
+          "id": "run_846", "title": "Add rate-limit headers to /export", "runState": "AWAITING_HUMAN",
+          "agentId": "agt_fix", "requestedById": "usr_ravi", "prNumber": 846, "headSha": "b1e7d40", "verdictId": "vd_846", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 88, "total": 88 },
+          "review": { "state": "approved", "rounds": 1, "reviewer": "CodeRabbit" },
+          "diffStat": { "additions": 47, "deletions": 4, "files": 3 },
+          "ageMinutes": 12,
+          "milestones": [
+            { "kind": "pick", "text": "Picked up · cloned acme/api", "atMinutes": 22 },
+            { "kind": "pr", "text": "Opened PR #846", "atMinutes": 17 },
+            { "kind": "ci", "text": "CI green · 88 tests", "atMinutes": 14 },
+            { "kind": "review", "text": "Review approved by CodeRabbit", "atMinutes": 12 },
+            { "kind": "ready", "text": "Ready for approval", "atMinutes": 12 }
+          ],
+          "pending": []
+        },
+        {
+          "id": "run_839", "title": "Migrate billing to the new Stripe API", "runState": "ESCALATED",
+          "agentId": "agt_fix", "requestedById": "usr_dana", "prNumber": 839, "headSha": "77c0aa1", "targetBranch": "main",
+          "checks": { "state": "failure", "passed": 191, "total": 194 },
+          "review": { "state": "changes_requested", "rounds": 3, "reviewer": "CodeRabbit" },
+          "blockedReason": { "summary": "The fix keeps re-breaking a sibling test — the agent can’t resolve it on its own.", "token": "webhooks/stripe.test.ts → 3 failing", "rounds": 3 },
+          "ageMinutes": 34,
+          "milestones": [
+            { "kind": "pick", "text": "Picked up · cloned acme/api", "atMinutes": 58 },
+            { "kind": "pr", "text": "Opened PR #839", "atMinutes": 49 },
+            { "kind": "review", "text": "Review round 1 → 3 — changes requested each time", "atMinutes": 40 },
+            { "kind": "blocked", "text": "Stopped after 3 review rounds — needs a human decision", "atMinutes": 34 }
+          ],
+          "pending": []
+        },
+        {
+          "id": "run_848", "title": "Fix the flaky auth-token refresh test", "runState": "BUILDING",
+          "agentId": "agt_ship", "requestedById": "usr_dana", "targetBranch": "main",
+          "checks": { "state": "pending" }, "ageMinutes": 6,
+          "milestones": [
+            { "kind": "pick", "text": "Picked up · cloned acme/api, reproducing the flake", "atMinutes": 6 },
+            { "kind": "build", "text": "Editing 3 files · running the suite", "atMinutes": 2 }
+          ],
+          "pending": [
+            { "in": 6000, "to": "REVIEWING", "setPr": true, "note": "Opened PR #{pr} — “Await the token refresh before retrying”", "kind": "pr" },
+            { "in": 4000, "to": "REVIEWING", "checks": "success", "note": "CI green · 216 tests", "kind": "ci" },
+            { "in": 4500, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+          ]
+        },
+        {
+          "id": "run_847", "title": "Cache the org-settings lookup", "runState": "REVIEWING",
+          "agentId": "agt_fix", "requestedById": "usr_mira", "prNumber": 847, "headSha": "9d21b3e", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 132, "total": 132 }, "review": { "state": "reviewing", "rounds": 2 }, "ageMinutes": 12,
+          "milestones": [
+            { "kind": "pr", "text": "Opened PR #847", "atMinutes": 12 },
+            { "kind": "ci", "text": "CI green · 132 tests", "atMinutes": 9 },
+            { "kind": "review", "text": "Review round 2 — addressing feedback", "atMinutes": 3 }
+          ],
+          "pending": [
+            { "in": 9000, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+          ]
+        },
+        {
+          "id": "run_849", "title": "Add pagination to search results", "runState": "BUILDING",
+          "agentId": "agt_ship", "requestedById": "usr_ravi", "targetBranch": "main",
+          "checks": { "state": "pending" }, "ageMinutes": 3,
+          "milestones": [ { "kind": "build", "text": "Running tests", "atMinutes": 1 } ],
+          "pending": [
+            { "in": 11000, "to": "REVIEWING", "setPr": true, "note": "Opened PR #{pr}", "kind": "pr" },
+            { "in": 4000, "to": "REVIEWING", "checks": "success", "note": "CI green · 96 tests", "kind": "ci" },
+            { "in": 5000, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+          ]
+        },
+        {
+          "id": "run_837", "title": "Handle empty CSV export gracefully", "runState": "DONE",
+          "agentId": "agt_ship", "requestedById": "usr_dana", "prNumber": 837, "headSha": "aa19f02", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 210, "total": 210 }, "review": { "state": "approved", "rounds": 1 }, "ageMinutes": 120,
+          "milestones": [ { "kind": "merged", "text": "Merged ✔ · closes this task", "atMinutes": 120 } ], "pending": []
+        },
+        {
+          "id": "run_835", "title": "Bump node to 24 in CI", "runState": "DONE",
+          "agentId": "agt_fix", "requestedById": "usr_ravi", "prNumber": 835, "headSha": "c73e5b1", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 210, "total": 210 }, "review": { "state": "approved", "rounds": 1 }, "ageMinutes": 300,
+          "milestones": [ { "kind": "merged", "text": "Merged ✔", "atMinutes": 300 } ], "pending": []
+        }
+      ]
+    },
+    {
+      "id": "repo_web", "slug": "acme/web-app", "defaultBranch": "main", "connected": false, "agentId": "agt_ship",
+      "seedRuns": [
+        {
+          "id": "run_512", "title": "Dark-mode flash on first paint", "runState": "REVIEWING",
+          "agentId": "agt_ship", "requestedById": "usr_mira", "prNumber": 512, "headSha": "44adf19", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 61, "total": 61 }, "review": { "state": "reviewing", "rounds": 1 }, "ageMinutes": 8,
+          "milestones": [ { "kind": "pr", "text": "Opened PR #512", "atMinutes": 8 }, { "kind": "ci", "text": "CI green · 61 tests", "atMinutes": 5 } ],
+          "pending": [ { "in": 8000, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" } ]
+        },
+        {
+          "id": "run_509", "title": "Lazy-load the settings route", "runState": "DONE",
+          "agentId": "agt_ship", "requestedById": "usr_dana", "prNumber": 509, "headSha": "1bd7c30", "targetBranch": "main",
+          "checks": { "state": "success", "passed": 61, "total": 61 }, "review": { "state": "approved", "rounds": 1 }, "ageMinutes": 240,
+          "milestones": [ { "kind": "merged", "text": "Merged ✔", "atMinutes": 240 } ], "pending": []
+        }
+      ]
+    },
+    {
+      "id": "repo_pay", "slug": "acme/payments", "defaultBranch": "main", "connected": false, "agentId": "agt_fix",
+      "seedRuns": []
+    }
+  ],
+
+  "scripts": {
+    "newTask": [
+      { "in": 1500, "to": "BUILDING", "note": "Picked up · cloning {repo} · reading the task", "kind": "pick" },
+      { "in": 3500, "to": "BUILDING", "note": "Edited the code · running the tests", "kind": "build" },
+      { "in": 3000, "to": "REVIEWING", "setPr": true, "note": "Opened PR #{pr}", "kind": "pr" },
+      { "in": 2500, "to": "REVIEWING", "checks": "success", "note": "CI green", "kind": "ci" },
+      { "in": 3000, "to": "REVIEW_FEEDBACK", "note": "Review round 1 — addressing 2 comments", "kind": "review" },
+      { "in": 3000, "to": "REVIEWING", "note": "Pushed fixes", "kind": "build" },
+      { "in": 2500, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+    ],
+    "approve": [
+      { "in": 700, "to": "MERGING", "note": "Merging…", "kind": "build" },
+      { "in": 1900, "to": "DONE", "note": "Merged ✔ · closes this task", "kind": "merged" }
+    ],
+    "requestChanges": [
+      { "in": 300, "to": "REVIEW_FEEDBACK", "note": "You requested changes — the agent is addressing them", "kind": "review" },
+      { "in": 3200, "to": "REVIEWING", "note": "Pushed fixes", "kind": "build" },
+      { "in": 2600, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+    ],
+    "continueBlocked": [
+      { "in": 1400, "to": "BUILDING", "checks": "pending", "note": "Resuming with your hint", "kind": "build" },
+      { "in": 3500, "to": "REVIEWING", "checks": "success", "note": "CI green · sibling test fixed", "kind": "ci" },
+      { "in": 2600, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+    ],
+    "abort": [
+      { "in": 300, "to": "CANCELLED", "note": "Aborted · branch & PR are kept", "kind": "abort" }
+    ]
+  }
+}
