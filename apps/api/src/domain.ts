@@ -316,6 +316,23 @@ export interface OutboxMessage {
   publishedAt: string | null;
 }
 
+// ── Connectors (Linear / CodeRabbit / Greptile) ──────────────────────────────
+export type ConnectorName = "linear" | "coderabbit" | "greptile";
+export type ConnectorStatus = "connected" | "error" | "not_configured";
+export interface ConnectorRecord {
+  workspaceId: string;
+  provider: ConnectorName;
+  category: string;
+  displayName: string;
+  status: ConnectorStatus;
+  accountLabel: string | null;
+  /** SecretStore-encrypted; NEVER returned to clients. */
+  encryptedKey: string | null;
+  encryptedGithubToken: string | null;
+  detail: string | null;
+  lastValidatedAt: string | null;
+}
+
 export const slug = (): string =>
   // deterministic-enough unique id without a dependency
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

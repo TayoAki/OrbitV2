@@ -8,14 +8,25 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import type { Deps } from "./ports";
 import { RunService, HttpError } from "./runService";
 import type { Orchestrator } from "./orchestrator";
+import type { ConnectorService } from "./connectorService";
 import { handleGithubWebhook } from "./webhook";
 
 export interface App {
   deps: Deps;
   runService: RunService;
   orchestrator: Orchestrator;
+  connectors: ConnectorService;
   resolveRepositoryId: (githubRepoId: number) => Promise<string | null>;
 }
+
+// Browser calls come from the (different-origin) web app; keys travel in POST
+// bodies, not cookies, so a permissive origin is safe here.
+const CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+};
 
 export function createHttpServer(app: App): Server {
   return createServer((req, res) => {
@@ -31,7 +42,40 @@ async function handle(app: App, req: IncomingMessage, res: ServerResponse): Prom
   const path = url.pathname;
   const method = req.method ?? "GET";
 
+  if (method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
   if (method === "GET" && path === "/healthz") return send(res, 200, { ok: true });
+
+  // ── connectors (Linear / CodeRabbit / Greptile) ─────────────────────────────
+  if (method === "GET" && path === "/v1/connectors") {
+    const ws = url.searchParams.get("workspaceId");
+    if (!ws) return send(res, 400, { error: "workspaceId required" });
+    return send(res, 200, { connectors: await app.connectors.list(ws) });
+  }
+  if (method === "GET" && path === "/v1/connectors/linear/issues") {
+    const ws = url.searchParams.get("workspaceId");
+    if (!ws) return send(res, 400, { error: "workspaceId required" });
+    return send(res, 200, { issues: await app.connectors.linearIssues(ws) });
+  }
+  const connTest = /^\/v1\/connectors\/([^/]+)\/test$/.exec(path);
+  if (method === "POST" && connTest) {
+    const body = (await readJson(req)) as { workspaceId?: string };
+    if (!body.workspaceId) return send(res, 400, { error: "workspaceId required" });
+    const result = await app.connectors.test(body.workspaceId, decodeURIComponent(connTest[1]));
+    return send(res, result.ok ? 200 : 400, result);
+  }
+  const connOne = /^\/v1\/connectors\/([^/]+)$/.exec(path);
+  if (method === "POST" && connOne) {
+    const body = (await readJson(req)) as { workspaceId?: string; apiKey?: string; githubToken?: string };
+    if (!body.workspaceId || !body.apiKey) return send(res, 400, { error: "workspaceId and apiKey required" });
+    const result = await app.connectors.connect(body.workspaceId, decodeURIComponent(connOne[1]), { apiKey: body.apiKey, githubToken: body.githubToken });
+    return send(res, result.ok ? 200 : 400, result);
+  }
+  if (method === "DELETE" && connOne) {
+    const ws = url.searchParams.get("workspaceId");
+    if (!ws) return send(res, 400, { error: "workspaceId required" });
+    await app.connectors.disconnect(ws, decodeURIComponent(connOne[1]));
+    return send(res, 200, { disconnected: true });
+  }
 
   // POST /v1/webhooks/github — raw body needed for signature verification.
   if (method === "POST" && path === "/v1/webhooks/github") {
@@ -106,6 +150,7 @@ async function streamEvents(app: App, runId: string, req: IncomingMessage, res: 
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
+    ...CORS,
   });
   let cursor = 0;
   let closed = false;
@@ -138,7 +183,7 @@ function header(req: IncomingMessage, name: string): string | undefined {
 }
 function send(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", ...CORS });
   res.end(json);
 }
 async function readRawBody(req: IncomingMessage): Promise<Buffer> {

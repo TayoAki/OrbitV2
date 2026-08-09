@@ -19,6 +19,8 @@ import type {
   Repository,
   PullRequestRecord,
   OutboxMessage,
+  ConnectorRecord,
+  ConnectorName,
 } from "./domain";
 import { slug } from "./domain";
 
@@ -273,6 +275,31 @@ export class PostgresStore implements Store {
     const { rows } = await this.pool.query("delete from enrollment_nonces where nonce=$1 returning run_id", [nonce]);
     return rows[0] ? { runId: rows[0].run_id } : null;
   }
+
+  // ── connectors ───────────────────────────────────────────────────────────────
+  async saveConnector(rec: ConnectorRecord): Promise<void> {
+    await this.pool.query(
+      `insert into connectors (workspace_id, provider, category, display_name, status, account_label,
+        encrypted_key, encrypted_github_token, detail, last_validated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       on conflict (workspace_id, provider) do update set category=excluded.category, display_name=excluded.display_name,
+         status=excluded.status, account_label=excluded.account_label, encrypted_key=excluded.encrypted_key,
+         encrypted_github_token=excluded.encrypted_github_token, detail=excluded.detail, last_validated_at=excluded.last_validated_at`,
+      [rec.workspaceId, rec.provider, rec.category, rec.displayName, rec.status, rec.accountLabel,
+       rec.encryptedKey, rec.encryptedGithubToken, rec.detail, rec.lastValidatedAt],
+    );
+  }
+  async getConnector(workspaceId: string, provider: ConnectorName): Promise<ConnectorRecord | null> {
+    const { rows } = await this.pool.query("select * from connectors where workspace_id=$1 and provider=$2", [workspaceId, provider]);
+    return rows[0] ? rowToConnector(rows[0]) : null;
+  }
+  async listConnectors(workspaceId: string): Promise<ConnectorRecord[]> {
+    const { rows } = await this.pool.query("select * from connectors where workspace_id=$1", [workspaceId]);
+    return rows.map(rowToConnector);
+  }
+  async deleteConnector(workspaceId: string, provider: ConnectorName): Promise<void> {
+    await this.pool.query("delete from connectors where workspace_id=$1 and provider=$2", [workspaceId, provider]);
+  }
 }
 
 // ── row → domain mappers ───────────────────────────────────────────────────────
@@ -327,6 +354,21 @@ function rowToOutbox(r: Record<string, unknown>): OutboxMessage {
     payload: (r.payload as Record<string, unknown>) ?? {},
     createdAt: iso(r.created_at),
     publishedAt: isoOrNull(r.published_at),
+  };
+}
+
+function rowToConnector(r: Record<string, unknown>): ConnectorRecord {
+  return {
+    workspaceId: r.workspace_id as string,
+    provider: r.provider as ConnectorRecord["provider"],
+    category: r.category as string,
+    displayName: r.display_name as string,
+    status: r.status as ConnectorRecord["status"],
+    accountLabel: (r.account_label as string) ?? null,
+    encryptedKey: (r.encrypted_key as string) ?? null,
+    encryptedGithubToken: (r.encrypted_github_token as string) ?? null,
+    detail: (r.detail as string) ?? null,
+    lastValidatedAt: isoOrNull(r.last_validated_at),
   };
 }
 

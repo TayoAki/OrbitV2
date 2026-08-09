@@ -14,6 +14,8 @@ import type {
   Repository,
   PullRequestRecord,
   OutboxMessage,
+  ConnectorRecord,
+  ConnectorName,
 } from "./domain";
 import { slug, isTerminal } from "./domain";
 
@@ -161,5 +163,20 @@ export class MemoryStore implements Store {
     if (!runId) return null;
     this.nonces.delete(nonce); // single-use
     return { runId };
+  }
+
+  private connectors = new Map<string, ConnectorRecord>(); // `${workspaceId}:${provider}`
+  async saveConnector(rec: ConnectorRecord): Promise<void> {
+    this.connectors.set(`${rec.workspaceId}:${rec.provider}`, { ...rec });
+  }
+  async getConnector(workspaceId: string, provider: ConnectorName): Promise<ConnectorRecord | null> {
+    const r = this.connectors.get(`${workspaceId}:${provider}`);
+    return r ? { ...r } : null;
+  }
+  async listConnectors(workspaceId: string): Promise<ConnectorRecord[]> {
+    return [...this.connectors.values()].filter((c) => c.workspaceId === workspaceId).map((c) => ({ ...c }));
+  }
+  async deleteConnector(workspaceId: string, provider: ConnectorName): Promise<void> {
+    this.connectors.delete(`${workspaceId}:${provider}`);
   }
 }

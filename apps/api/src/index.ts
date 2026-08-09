@@ -15,6 +15,8 @@ import { CodeRabbitReviewProvider } from "./adapters/review.coderabbit";
 import { PassthroughSecrets, StubArtifacts } from "./adapters/misc.stub";
 import { Orchestrator } from "./orchestrator";
 import { RunService } from "./runService";
+import { ConnectorService } from "./connectorService";
+import { buildConnectorRegistry } from "./connectors";
 import { createHttpServer } from "./http";
 
 /** Fail-fast config: no insecure defaults in production. */
@@ -44,6 +46,7 @@ export function buildSystem(repos: Repository[], store: Store = new MemoryStore(
   };
   const orchestrator = new Orchestrator(deps);
   const runService = new RunService(deps);
+  const connectors = new ConnectorService(deps, buildConnectorRegistry());
   const byGithubId = new Map(repos.map((r) => [r.githubRepoId, r.id] as const));
   const resolveRepositoryId = async (githubRepoId: number) => byGithubId.get(githubRepoId) ?? null;
 
@@ -86,7 +89,7 @@ export function buildSystem(repos: Repository[], store: Store = new MemoryStore(
     }
   };
 
-  return { deps, store, github, execution, review, orchestrator, runService, resolveRepositoryId };
+  return { deps, store, github, execution, review, orchestrator, runService, connectors, resolveRepositoryId };
 }
 
 /** Drain the transactional outbox into the orchestrator (the async job pump). */

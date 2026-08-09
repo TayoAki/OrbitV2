@@ -37,6 +37,23 @@ export interface BackendEvent {
   createdAt: string;
 }
 
+export interface PublicConnector {
+  provider: "linear" | "coderabbit" | "greptile";
+  displayName: string;
+  category: string;
+  needsGithubToken: boolean;
+  status: "connected" | "error" | "not_configured";
+  accountLabel: string | null;
+  detail: string | null;
+  lastValidatedAt: string | null;
+}
+export interface ConnectorValidation {
+  ok: boolean;
+  status: number;
+  account?: string;
+  detail: string;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   if (!isLiveBackend) throw new Error("NEXT_PUBLIC_API_URL is not set");
   const res = await fetch(`${API_BASE}${path}`, {
@@ -80,6 +97,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ userId }),
     }),
+  // ── connectors (Linear / CodeRabbit / Greptile) ───────────────────────────
+  listConnectors: (workspaceId: string) =>
+    req<{ connectors: PublicConnector[] }>(`/v1/connectors?workspaceId=${encodeURIComponent(workspaceId)}`),
+  connectConnector: (provider: string, workspaceId: string, apiKey: string, githubToken?: string) =>
+    req<ConnectorValidation>(`/v1/connectors/${encodeURIComponent(provider)}`, {
+      method: "POST",
+      body: JSON.stringify({ workspaceId, apiKey, githubToken }),
+    }),
+  testConnector: (provider: string, workspaceId: string) =>
+    req<ConnectorValidation>(`/v1/connectors/${encodeURIComponent(provider)}/test`, {
+      method: "POST",
+      body: JSON.stringify({ workspaceId }),
+    }),
+  disconnectConnector: (provider: string, workspaceId: string) =>
+    req<{ disconnected: boolean }>(`/v1/connectors/${encodeURIComponent(provider)}?workspaceId=${encodeURIComponent(workspaceId)}`, {
+      method: "DELETE",
+    }),
+  linearIssues: (workspaceId: string) =>
+    req<{ issues: { id: string; identifier: string; title: string; state: string }[] }>(
+      `/v1/connectors/linear/issues?workspaceId=${encodeURIComponent(workspaceId)}`,
+    ),
+
   /** Tail a run's event log over SSE. Returns an unsubscribe function. */
   streamRunEvents(id: string, onEvent: (e: BackendEvent) => void): () => void {
     if (!isLiveBackend) return () => {};

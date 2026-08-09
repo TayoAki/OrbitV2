@@ -20,6 +20,8 @@ import type {
   Mergeability,
   AttentionReason,
   RunState,
+  ConnectorRecord,
+  ConnectorName,
 } from "./domain";
 
 // ── Store (Postgres in prod; in-memory here). Optimistic concurrency on Run. ──
@@ -85,6 +87,12 @@ export interface Store {
   // runner enrollment (single-use nonce → scoped session)
   createEnrollmentNonce(runId: string): Promise<string>;
   redeemEnrollmentNonce(nonce: string): Promise<{ runId: string } | null>;
+
+  // connectors (Linear / CodeRabbit / Greptile) — encrypted credentials at rest
+  saveConnector(rec: ConnectorRecord): Promise<void>;
+  getConnector(workspaceId: string, provider: ConnectorName): Promise<ConnectorRecord | null>;
+  listConnectors(workspaceId: string): Promise<ConnectorRecord[]>;
+  deleteConnector(workspaceId: string, provider: ConnectorName): Promise<void>;
 }
 
 // ── GitHub control-plane client ──────────────────────────────────────────────

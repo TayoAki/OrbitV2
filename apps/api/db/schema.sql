@@ -143,3 +143,19 @@ create table if not exists enrollment_nonces (
   created_at timestamptz not null default now(),
   redeemed_at timestamptz
 );
+
+-- External tool connectors (Linear / CodeRabbit / Greptile). Credentials are stored
+-- ENCRYPTED (SecretStore/KMS) and never returned to clients.
+create table if not exists connectors (
+  workspace_id           text not null,
+  provider               text not null,   -- linear | coderabbit | greptile
+  category               text not null,
+  display_name           text not null,
+  status                 text not null,   -- connected | error | not_configured
+  account_label          text,
+  encrypted_key          text,
+  encrypted_github_token text,
+  detail                 text,
+  last_validated_at      timestamptz,
+  primary key (workspace_id, provider)
+);
