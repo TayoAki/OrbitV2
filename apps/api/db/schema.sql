@@ -11,7 +11,7 @@
 --   • an approval is bound to a SHA + a gate hash       → approvals.approved_sha/gate_hash
 -- ─────────────────────────────────────────────────────────────────────────────
 
-create table repositories (
+create table if not exists repositories (
   id                text primary key,
   github_repo_id    bigint not null unique,
   installation_id   bigint not null,
@@ -23,7 +23,7 @@ create table repositories (
   required_checks   text[] not null default '{}'
 );
 
-create table runs (
+create table if not exists runs (
   id                 text primary key,
   workspace_id       text not null,
   repository_id      text not null references repositories(id),
@@ -52,14 +52,14 @@ create table runs (
 );
 
 -- At most one non-terminal run per branch (the agent's one allowed branch).
-create unique index uniq_active_run_branch
+create unique index if not exists uniq_active_run_branch
   on runs (repository_id, branch_name)
   where branch_name is not null and state not in ('DONE','FAILED','CANCELLED');
 
 -- The inbox is a query, not a table: attention_reason set on a live run.
-create index idx_runs_inbox on runs (workspace_id) where attention_reason is not null and state not in ('DONE','FAILED','CANCELLED');
+create index if not exists idx_runs_inbox on runs (workspace_id) where attention_reason is not null and state not in ('DONE','FAILED','CANCELLED');
 
-create table run_events (
+create table if not exists run_events (
   id              text primary key,
   run_id          text not null references runs(id),
   sequence        integer not null,
@@ -74,7 +74,7 @@ create table run_events (
 );
 
 -- Transactional outbox: written in the same tx as the state change, drained async.
-create table outbox (
+create table if not exists outbox (
   id           text primary key,
   job_type     text not null,
   run_id       text not null,
@@ -82,10 +82,10 @@ create table outbox (
   created_at   timestamptz not null default now(),
   published_at timestamptz
 );
-create index idx_outbox_unpublished on outbox (created_at) where published_at is null;
+create index if not exists idx_outbox_unpublished on outbox (created_at) where published_at is null;
 
 -- Webhook dedup — GitHub guarantees at-least-once, so the delivery id is the key.
-create table webhook_deliveries (
+create table if not exists webhook_deliveries (
   delivery_id text primary key,
   event       text not null,
   action      text,
@@ -94,7 +94,7 @@ create table webhook_deliveries (
 
 -- Immutable gate snapshot: the exact set of green facts, hashed. The human approves
 -- this hash; merge is conditioned on it.
-create table gate_snapshots (
+create table if not exists gate_snapshots (
   run_id     text not null references runs(id),
   head_sha   text not null,
   hash       text not null,
@@ -105,7 +105,7 @@ create table gate_snapshots (
 );
 
 -- An approval is bound to a SHA and a gate hash. Merge re-verifies head == approved_sha.
-create table approvals (
+create table if not exists approvals (
   run_id          text not null references runs(id),
   approved_sha    text not null,
   gate_hash       text not null,
@@ -115,7 +115,7 @@ create table approvals (
   primary key (run_id, gate_hash)
 );
 
-create table executors (
+create table if not exists executors (
   id           text primary key,
   run_id       text not null references runs(id),
   provider     text not null,
@@ -124,9 +124,9 @@ create table executors (
   created_at   timestamptz not null default now(),
   destroyed_at timestamptz
 );
-create unique index uniq_executor_active_per_run on executors (run_id) where status <> 'DESTROYED';
+create unique index if not exists uniq_executor_active_per_run on executors (run_id) where status <> 'DESTROYED';
 
-create table pull_requests (
+create table if not exists pull_requests (
   run_id    text primary key references runs(id),
   pr_number integer not null,
   head_sha  text not null,
@@ -137,7 +137,7 @@ create table pull_requests (
 );
 
 -- Single-use runner enrollment nonces (exchanged for a scoped runner session).
-create table enrollment_nonces (
+create table if not exists enrollment_nonces (
   nonce      text primary key,
   run_id     text not null references runs(id),
   created_at timestamptz not null default now(),

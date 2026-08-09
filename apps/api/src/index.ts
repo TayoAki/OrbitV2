@@ -4,10 +4,11 @@
 // Codespaces / CodeRabbit is a matter of replacing the four constructors below;
 // nothing above this file changes. Same philosophy as apps/web's sim engine.
 // ─────────────────────────────────────────────────────────────────────────────
-import type { Deps } from "./ports";
+import type { Deps, Store } from "./ports";
 import type { Repository, CheckObservation } from "./domain";
 import { branchFor } from "./domain";
 import { MemoryStore } from "./store.memory";
+import { PostgresStore } from "./store.postgres";
 import { SimGitHub } from "./adapters/github.stub";
 import { CodespacesExecutionProvider } from "./adapters/execution.codespaces";
 import { CodeRabbitReviewProvider } from "./adapters/review.coderabbit";
@@ -16,8 +17,19 @@ import { Orchestrator } from "./orchestrator";
 import { RunService } from "./runService";
 import { createHttpServer } from "./http";
 
-export function buildSystem(repos: Repository[]) {
-  const store = new MemoryStore(repos);
+/** Fail-fast config: no insecure defaults in production. */
+export function loadConfig(): Deps["config"] {
+  const prod = process.env.NODE_ENV === "production";
+  const webhookSecret = process.env.SHIPBOT_WEBHOOK_SECRET ?? (prod ? "" : "dev-webhook-secret");
+  if (!webhookSecret) throw new Error("SHIPBOT_WEBHOOK_SECRET is required in production");
+  const port = Number(process.env.PORT ?? 8787);
+  const controlPlaneUrl =
+    process.env.SHIPBOT_CONTROL_URL ??
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${port}`);
+  return { webhookSecret, controlPlaneUrl, promptVersion: "2026-08-08" };
+}
+
+export function buildSystem(repos: Repository[], store: Store = new MemoryStore(repos)) {
   const github = new SimGitHub();
   const execution = new CodespacesExecutionProvider({ bootstrappable: true });
   const review = new CodeRabbitReviewProvider();
@@ -28,11 +40,7 @@ export function buildSystem(repos: Repository[]) {
     review,
     secrets: new PassthroughSecrets(),
     artifacts: new StubArtifacts(),
-    config: {
-      webhookSecret: process.env.SHIPBOT_WEBHOOK_SECRET ?? "dev-webhook-secret",
-      controlPlaneUrl: process.env.SHIPBOT_CONTROL_URL ?? "http://localhost:8787",
-      promptVersion: "2026-08-08",
-    },
+    config: loadConfig(),
   };
   const orchestrator = new Orchestrator(deps);
   const runService = new RunService(deps);
@@ -121,9 +129,26 @@ function seedRepository(): Repository {
   };
 }
 
+/** Choose the durable store when DATABASE_URL is present; else in-memory. */
+async function resolveStore(repos: Repository[]): Promise<Store> {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.log("store: in-memory (set DATABASE_URL to persist)");
+    return new MemoryStore(repos);
+  }
+  const store = new PostgresStore(url);
+  await store.migrate();
+  await store.seedRepositories(repos);
+  console.log("store: postgres (migrated + seeded)");
+  return store;
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const system = buildSystem([seedRepository()]);
+  void (async () => {
+  const repos = [seedRepository()];
+  const store = await resolveStore(repos);
+  const system = buildSystem(repos, store);
   const stopPump = startPump(system);
   const server = createHttpServer(system);
   const port = Number(process.env.PORT ?? 8787);
@@ -145,4 +170,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  })();
 }
