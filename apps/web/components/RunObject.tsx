@@ -45,7 +45,6 @@ export function chipTone(state: RunStateName): ChipTone {
       return "critical";
     case "BUILDING":
     case "REVIEWING":
-    case "REVIEW_FEEDBACK":
       return "info";
     case "MERGING":
       return "active";
@@ -76,7 +75,6 @@ function runGlyph(run: RunState): { icon: IconName; tone: string } {
     case "FAILED":
       return { icon: "alert", tone: "critical" };
     case "REVIEWING":
-    case "REVIEW_FEEDBACK":
       return { icon: "review", tone: "info" };
     case "MERGING":
       return { icon: "merge", tone: "active" };
@@ -101,13 +99,14 @@ function DiffStat({ run }: { run: RunState }) {
 
 // In-flight progress hint, derived from the run's current state + milestones.
 function Progress({ run }: { run: RunState }) {
-  const ms = run.milestones.length;
-  if (run.runState === "REVIEWING" || run.runState === "REVIEW_FEEDBACK") {
-    const rounds = run.review.rounds ?? 1;
+  const ms = run.events.length;
+  if (run.runState === "REVIEWING") {
+    const rounds = run.review.currentRound || 1;
+    const max = run.review.maxRounds || 3;
     return (
       <div className="progress">
-        <span className="plabel">review {Math.min(rounds, 3)}/3</span>
-        <span className="bar"><span className="bar-fill info" style={{ width: `${Math.min(100, (rounds / 3) * 100)}%` }} /></span>
+        <span className="plabel">review {Math.min(rounds, max)}/{max}</span>
+        <span className="bar"><span className="bar-fill info" style={{ width: `${Math.min(100, (rounds / max) * 100)}%` }} /></span>
       </div>
     );
   }
@@ -153,7 +152,7 @@ function RowMid({ run }: { run: RunState }) {
     );
   }
   if (run.runState === "ESCALATED" || run.runState === "FAILED") {
-    return run.blockedReason?.token ? <div className="diff" style={{ color: "var(--critical)" }}>{run.blockedReason.token}</div> : null;
+    return run.escalation?.token ? <div className="diff" style={{ color: "var(--critical)" }}>{run.escalation.token}</div> : null;
   }
   return <Progress run={run} />;
 }

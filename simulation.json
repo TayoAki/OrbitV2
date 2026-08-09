@@ -151,7 +151,7 @@
       { "in": 3500, "to": "BUILDING", "note": "Edited the code · running the tests", "kind": "build" },
       { "in": 3000, "to": "REVIEWING", "setPr": true, "note": "Opened PR #{pr}", "kind": "pr" },
       { "in": 2500, "to": "REVIEWING", "checks": "success", "note": "CI green", "kind": "ci" },
-      { "in": 3000, "to": "REVIEW_FEEDBACK", "note": "Review round 1 — addressing 2 comments", "kind": "review" },
+      { "in": 3000, "to": "BUILDING", "note": "Review round 1 — addressing 2 comments", "kind": "review" },
       { "in": 3000, "to": "REVIEWING", "note": "Pushed fixes", "kind": "build" },
       { "in": 2500, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
     ],
@@ -160,7 +160,7 @@
       { "in": 1900, "to": "DONE", "note": "Merged ✔ · closes this task", "kind": "merged" }
     ],
     "requestChanges": [
-      { "in": 300, "to": "REVIEW_FEEDBACK", "note": "You requested changes — the agent is addressing them", "kind": "review" },
+      { "in": 300, "to": "BUILDING", "note": "You requested changes — the agent is addressing them", "kind": "review" },
       { "in": 3200, "to": "REVIEWING", "note": "Pushed fixes", "kind": "build" },
       { "in": 2600, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
     ],

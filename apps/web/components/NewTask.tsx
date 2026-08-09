@@ -13,13 +13,19 @@ export function NewTaskModal({ repoId, onClose }: { repoId?: string; onClose: ()
 
   const [repo, setRepo] = useState(repoId ?? connected[0]?.id ?? "");
   const [title, setTitle] = useState("");
+  const [criteria, setCriteria] = useState("");
   const [agentId, setAgentId] = useState<string>("");
 
   const canStart = repo && title.trim().length > 3;
 
   const start = () => {
     if (!canStart) return;
-    const id = app.startTask({ repoId: repo, title: title.trim(), agentId: agentId || undefined });
+    const id = app.startTask({
+      repoId: repo,
+      title: title.trim(),
+      acceptanceCriteria: criteria.trim() || undefined,
+      agentId: agentId || undefined,
+    });
     onClose();
     if (id) ui.openRun(id);
   };
@@ -47,13 +53,23 @@ export function NewTaskModal({ repoId, onClose }: { repoId?: string; onClose: ()
                 </select>
               </div>
               <div className="field">
-                <label>What should the agent do?</label>
+                <label>What should be changed?</label>
                 <textarea
                   autoFocus
-                  placeholder="e.g. Add retry-with-backoff to the webhook sender and cover it with a test"
+                  placeholder="e.g. Add retry-with-backoff to the webhook sender"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
+              </div>
+              <div className="field">
+                <label>How will we know it&rsquo;s done? <span className="muted" style={{ fontWeight: 400 }}>· acceptance criteria</span></label>
+                <textarea
+                  placeholder="e.g. Failed sends retry 3× with backoff; a test proves a transient 500 eventually succeeds"
+                  value={criteria}
+                  onChange={(e) => setCriteria(e.target.value)}
+                  style={{ minHeight: 60 }}
+                />
+                <div className="field-hint">This is what the verifier will prove — the clearer it is, the better the run.</div>
               </div>
               <div className="field">
                 <label>Agent</label>

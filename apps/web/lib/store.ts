@@ -1,31 +1,35 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The one normalized store. In production this is fed by a resumable SSE tail
-// (snapshot at N, stream from N+1). Here the same interface is fed by the local
-// SimEngine (lib/sim). Every surface reads it through selectors — no surface owns
-// run state. (FRONTEND_PLAN §0)
+// The one normalized store. In production it's fed by a resumable SSE tail
+// (snapshot + cursor + tail); the events arrive already sequenced by the backend.
+// Here the same interface is fed by the local SimEngine, which is the ordering
+// authority (it stamps event.id + per-run seq). The store never invents seq.
 // ─────────────────────────────────────────────────────────────────────────────
 import simData from "@/data/simulation.json";
 import type {
   StoreState,
   ShipEvent,
   RunState,
+  RunEvent,
   Member,
   Connection,
   Repo,
+  Task,
   Step,
   Checks,
-  Review,
   DiffStat,
-  BlockedReason,
-  Milestone,
+  ReviewState,
   RunStateName,
   AgentConfig,
   Channel,
   Message,
 } from "./types";
 import { applyEvent } from "./reducer";
+import { stepKindToEventType } from "./labels";
 
-// ── Fixture typing (permissive; JSON is cast once here) ──────────────────────
+// ── Fixture authoring shapes (sim-only; NOT the production contract) ──────────
+interface SeedReview { state: ReviewState; rounds?: number; reviewer?: string; }
+interface SeedMilestone { kind: string; text: string; atMinutes?: number; }
+interface SeedBlocked { summary: string; token?: string; rounds?: number; }
 interface SeedRun {
   id: string;
   title: string;
@@ -37,11 +41,11 @@ interface SeedRun {
   verdictId?: string;
   targetBranch: string;
   checks?: Checks;
-  review?: Review;
+  review?: SeedReview;
   diffStat?: DiffStat;
-  blockedReason?: BlockedReason;
+  blockedReason?: SeedBlocked;
   ageMinutes?: number;
-  milestones?: Milestone[];
+  milestones?: SeedMilestone[];
   pending?: Step[];
 }
 interface SeedRepo {
@@ -64,14 +68,35 @@ export interface Fixture {
 
 export const fixture = simData as unknown as Fixture;
 
-// Repos connected on first load. repo_api starts connected so the inbox is
-// populated immediately (matches the reference); the others are connected live
-// from the Connections screen to demo "connect → inbox populates / or nothing".
 const DEFAULT_CONNECTED = new Set<string>(["repo_api"]);
 
+function seedToTask(seed: SeedRun, repo: SeedRepo): Task {
+  return {
+    id: `task_${seed.id}`,
+    source: { type: "orbit" },
+    repoId: repo.id,
+    description: seed.title,
+    acceptanceCriteria: "",
+    requestedById: seed.requestedById,
+    createdAt: "",
+  };
+}
+
 function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
+  const events: RunEvent[] = (seed.milestones ?? []).map((m, i) => ({
+    id: `seed_${seed.id}_${i}`,
+    seq: i + 1,
+    // A 'review' milestone whose copy describes an approval is a review.approved,
+    // not changes_requested (the fixture kind can't express approval directly).
+    type: m.kind === "review" && /approv/i.test(m.text) ? "review.approved" : stepKindToEventType(m.kind),
+    source: "agent",
+    at: "",
+    atMinutes: m.atMinutes,
+    data: { text: m.text },
+  }));
   return {
     id: seed.id,
+    taskId: `task_${seed.id}`,
     title: seed.title,
     runState: seed.runState,
     agentId: seed.agentId,
@@ -83,15 +108,31 @@ function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
     verdictId: seed.verdictId,
     targetBranch: seed.targetBranch ?? repo.defaultBranch,
     checks: seed.checks ?? { state: "none" },
-    review: seed.review ?? { state: "none" },
+    review: {
+      provider: seed.review?.reviewer,
+      state: seed.review?.state ?? "none",
+      currentRound: seed.review?.rounds ?? 0,
+      maxRounds: 3,
+      reviewer: seed.review?.reviewer,
+      rounds: [],
+    },
+    verification: { status: "NOT_REQUIRED", attempts: [] },
+    mergeability: "MERGEABLE",
     diffStat: seed.diffStat,
-    blockedReason: seed.blockedReason,
+    escalation: seed.blockedReason
+      ? {
+          kind: "REVIEW_LIMIT",
+          summary: seed.blockedReason.summary,
+          token: seed.blockedReason.token,
+          resumeFrom: "BUILDING",
+          question: "The agent stopped after the review-round cap. Continue with a hint, or abort?",
+        }
+      : undefined,
     ageMinutes: seed.ageMinutes ?? 0,
-    milestones: (seed.milestones ?? []).map((m) => ({ ...m })),
+    events,
   };
 }
 
-// Default buzz-inspired runtime config per agent. Editable at runtime.
 const AGENT_CONFIGS: Record<string, AgentConfig> = {
   agt_ship: {
     model: "claude-sonnet-4.5",
@@ -134,14 +175,7 @@ function seedChannels(): Channel[] {
 
 function seedMessages(): Record<string, Message[]> {
   const mk = (id: string, channelId: string, authorId: string, at: number, text: string, mentions: string[] = [], kind: Message["kind"] = "text", runId?: string): Message => ({
-    id,
-    channelId,
-    authorId,
-    at,
-    text,
-    mentions,
-    kind,
-    runId,
+    id, channelId, authorId, at, text, mentions, kind, runId,
   });
   return {
     ch_general: [mk("m_g1", "ch_general", "usr_mira", 180, "welcome to the workspace 👋 agents live here too")],
@@ -164,6 +198,7 @@ export function buildInitialState(): StoreState {
 
   const repos: Record<string, Repo> = {};
   const runs: Record<string, RunState> = {};
+  const tasks: Record<string, Task> = {};
   for (const repo of fixture.repos) {
     repos[repo.id] = {
       id: repo.id,
@@ -172,31 +207,32 @@ export function buildInitialState(): StoreState {
       connected: DEFAULT_CONNECTED.has(repo.id) ? true : !!repo.connected,
       agentId: repo.agentId,
     };
-    for (const seed of repo.seedRuns) runs[seed.id] = seedToRun(seed, repo);
+    for (const seed of repo.seedRuns) {
+      runs[seed.id] = seedToRun(seed, repo);
+      tasks[`task_${seed.id}`] = seedToTask(seed, repo);
+    }
   }
 
   return {
     org: fixture.org,
     currentUserId: fixture.currentUserId,
     nextPr: fixture.config.nextPr,
-    seq: 0,
+    cursor: "evt_0",
     members,
     connections: fixture.connections.map((c) => ({ ...c })),
     repos,
+    tasks,
     runs,
     channels: seedChannels(),
     messages: seedMessages(),
   };
 }
 
-/** Pending timelines + scripts, sourced straight from the fixture. */
 export function pendingTimelines(): Map<string, { repoId: string; steps: Step[] }> {
   const map = new Map<string, { repoId: string; steps: Step[] }>();
   for (const repo of fixture.repos) {
     for (const seed of repo.seedRuns) {
-      if (seed.pending && seed.pending.length) {
-        map.set(seed.id, { repoId: repo.id, steps: seed.pending });
-      }
+      if (seed.pending && seed.pending.length) map.set(seed.id, { repoId: repo.id, steps: seed.pending });
     }
   }
   return map;
@@ -212,24 +248,20 @@ type Listener = () => void;
 export interface Store {
   getSnapshot: () => StoreState;
   subscribe: (l: Listener) => () => void;
-  /** Assigns the next seq, folds the event, notifies subscribers. */
-  dispatch: (ev: Omit<ShipEvent, "seq">) => ShipEvent;
+  /** Fold a fully-sequenced event (id + per-run seq assigned upstream). */
+  apply: (ev: ShipEvent) => ShipEvent;
 }
 
 export function createStore(initial?: StoreState): Store {
   let state = initial ?? buildInitialState();
-  let seq = state.seq;
   const listeners = new Set<Listener>();
-
   return {
     getSnapshot: () => state,
     subscribe: (l) => {
       listeners.add(l);
       return () => listeners.delete(l);
     },
-    dispatch: (partial) => {
-      seq += 1;
-      const ev: ShipEvent = { ...partial, seq };
+    apply: (ev) => {
       state = applyEvent(state, ev);
       listeners.forEach((l) => l());
       return ev;

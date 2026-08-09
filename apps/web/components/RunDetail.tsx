@@ -3,47 +3,42 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useApp, useAppState } from "@/lib/react";
 import { selectRunDetail } from "@/lib/selectors";
-import { KIND_LABEL, ageLabel } from "@/lib/labels";
-import type { Milestone, RunState } from "@/lib/types";
+import { describeEvent, ageLabel } from "@/lib/labels";
+import type { RunEvent, RunState, EscalationKind, ReviewRound, Escalation } from "@/lib/types";
 import { Icon } from "./icons";
 import { StateChip, Avatar } from "./RunObject";
 
-function dotTone(kind: string): string {
-  switch (kind) {
-    case "ready":
-      return "warn";
-    case "blocked":
-    case "abort":
-      return "critical";
-    case "merged":
-    case "ci":
-      return "good";
-    case "pick":
-      return "idle";
-    default:
-      return "";
-  }
-}
+const ESCALATION_LABEL: Record<EscalationKind, string> = {
+  CLARIFICATION: "Needs clarification",
+  CREDENTIAL: "Missing credential",
+  PERMISSION: "Needs permission",
+  AUTHENTICATION: "Authentication required",
+  REVIEW_LIMIT: "Hit the review-round limit",
+  BUILD_LIMIT: "Hit the build-attempt limit",
+  EXTERNAL_FAILURE: "External failure",
+  UNKNOWN: "Needs a human",
+};
 
 function Timeline({ run }: { run: RunState }) {
   return (
     <div className="timeline">
-      {run.milestones.map((m: Milestone, i: number) => {
-        const last = i === run.milestones.length - 1;
-        const fresh = m.seq !== undefined && m.seq === run.flashSeq;
-        const when = m.atMinutes && m.atMinutes > 0 ? `${m.atMinutes}m ago` : "just now";
+      {run.events.map((ev: RunEvent, i: number) => {
+        const d = describeEvent(ev);
+        const last = i === run.events.length - 1;
+        const fresh = ev.seq === run.flashSeq;
+        const when = ev.atMinutes && ev.atMinutes > 0 ? `${ev.atMinutes}m ago` : "just now";
         return (
-          <div key={i} className={`tl-item ${fresh ? "fresh" : ""}`}>
+          <div key={ev.id} className={`tl-item ${fresh ? "fresh" : ""}`}>
             <div className="tl-rail">
-              <span className={`tl-dot ${dotTone(m.kind)}`} />
+              <span className={`tl-dot ${d.dot}`} />
               {!last && <span className="tl-line" />}
             </div>
             <div className="tl-content">
               <div className="tl-label">
-                {KIND_LABEL[m.kind] ?? "Update"}
+                {d.label}
                 <span className="when">{when}</span>
               </div>
-              <div className="tl-detail">{m.text}</div>
+              <div className="tl-detail">{d.detail}</div>
             </div>
           </div>
         );
@@ -52,25 +47,44 @@ function Timeline({ run }: { run: RunState }) {
   );
 }
 
-function Evidence() {
-  // Decorative before→after thumbnails. Real screenshots arrive from the run's
-  // artifact bucket in production; here we sketch the shape.
+function ReviewRounds({ rounds, maxRounds }: { rounds: ReviewRound[]; maxRounds: number }) {
+  if (!rounds.length) return null;
   return (
-    <div className="evidence">
-      <div className="thumb">
-        <div className="cap">Before</div>
-        <div className="shot" style={{ background: "repeating-linear-gradient(135deg, var(--surface-3), var(--surface-3) 8px, var(--surface-2) 8px, var(--surface-2) 16px)" }}>
-          <Icon name="alert" size={20} className="muted" />
-        </div>
+    <>
+      <div className="rd-section">Review rounds ({rounds.length}/{maxRounds})</div>
+      <div className="stack">
+        {rounds.map((r) => (
+          <div className="round-row" key={r.round}>
+            <span className="round-n">Round {r.round}</span>
+            {r.status === "APPROVED" ? (
+              <span className="round-status good"><Icon name="check" size={13} /> Approved</span>
+            ) : (
+              <span className="round-status warn">Changes requested · {r.blockingComments} blocking</span>
+            )}
+          </div>
+        ))}
       </div>
-      <div className="arrow"><Icon name="arrowRight" size={18} /></div>
-      <div className="thumb">
-        <div className="cap">After</div>
-        <div className="shot" style={{ background: "var(--brand-tint)" }}>
-          <Icon name="checkCircle" size={22} />
-        </div>
+    </>
+  );
+}
+
+function VerificationSection({ run }: { run: RunState }) {
+  const v = run.verification;
+  if (v.status === "NOT_REQUIRED" || v.attempts.length === 0) return null; // dormant in v1
+  return (
+    <>
+      <div className="rd-section">Functional verification</div>
+      <div className="stack">
+        {v.attempts.map((a) => (
+          <div className="round-row" key={a.id}>
+            <span className="round-n">Attempt {a.attempt}</span>
+            <span className={`round-status ${a.status === "PASSED" ? "good" : a.status === "FAILED" ? "crit" : ""}`}>
+              {a.status === "RUNNING" ? "Running…" : a.status === "PASSED" ? "Passed" : "Failed"}
+            </span>
+          </div>
+        ))}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -87,14 +101,19 @@ function ApprovalPanel({ run }: { run: RunState }) {
     setComposer(false);
     setNote("");
   };
+  const verificationRequired = run.verification.status !== "NOT_REQUIRED";
 
   return (
     <div className="approval">
       <h4>Approval panel</h4>
+      <p className="approval-gate">{approval.machineReady ? "Machine gates passed — ready for your review." : "Waiting on machine gates."}</p>
       <div className="approval-checks">
         <span className={`acheck ${approval.ciGreen ? "" : "pending"}`}><Icon name="check" size={14} /> CI green</span>
         <span className={`acheck ${approval.reviewApproved ? "" : "pending"}`}><Icon name="check" size={14} /> review approved</span>
-        <span className={`acheck ${approval.noConflicts ? "" : "pending"}`}><Icon name="check" size={14} /> no conflicts</span>
+        <span className={`acheck ${approval.mergeable ? "" : "pending"}`}><Icon name="check" size={14} /> no conflicts</span>
+        {verificationRequired && (
+          <span className={`acheck ${approval.verificationOk ? "" : "pending"}`}><Icon name="check" size={14} /> verified</span>
+        )}
       </div>
       <p className="approval-prov">
         Requested by <span className="k">@{requester?.handle}</span> · built by agent{" "}
@@ -130,12 +149,27 @@ function ApprovalPanel({ run }: { run: RunState }) {
 function BlockedPanel({ run }: { run: RunState }) {
   const app = useApp();
   const [hint, setHint] = useState("");
+  // FAILED runs can reach this panel without a structured escalation — give it a
+  // sensible fallback so the body is never empty.
+  const esc: Escalation =
+    run.escalation ?? {
+      kind: run.runState === "FAILED" ? "EXTERNAL_FAILURE" : "UNKNOWN",
+      summary:
+        run.runState === "FAILED"
+          ? "This run failed and needs a human to decide next steps."
+          : "This run needs a human before it can continue.",
+      resumeFrom: "BUILDING",
+    };
   return (
     <div className="blocked-panel">
-      <h4>Blocked — needs a human</h4>
-      {run.blockedReason?.summary && <p>{run.blockedReason.summary}</p>}
-      {run.blockedReason?.token && <div className="token">{run.blockedReason.token}</div>}
-      <div className="composer" style={{ marginTop: 0, marginBottom: 12 }}>
+      <div className="blocked-head">
+        <h4>Blocked — needs a human</h4>
+        <span className="esc-kind">{ESCALATION_LABEL[esc.kind]}</span>
+      </div>
+      {esc.summary && <p>{esc.summary}</p>}
+      {esc.question && <p className="esc-question">{esc.question}</p>}
+      {esc.token && <div className="token">{esc.token}</div>}
+      <div className="composer" style={{ marginTop: 0, marginBottom: 10 }}>
         <textarea
           placeholder="Optional hint to unblock the agent (e.g. which approach to take)…"
           value={hint}
@@ -143,6 +177,9 @@ function BlockedPanel({ run }: { run: RunState }) {
           style={{ minHeight: 60 }}
         />
       </div>
+      <p className="approval-gate" style={{ margin: "0 0 10px" }}>
+        Continue resumes the run from <b>{esc?.resumeFrom ?? "BUILDING"}</b>.
+      </p>
       <div className="blocked-actions">
         <button className="btn btn-brand" onClick={() => app.continueRun(run.id)}>
           <Icon name="build" size={15} /> Continue
@@ -174,10 +211,11 @@ export function RunDetail({
       </div>
     );
   }
-  const { run, agent } = detail;
+  const { run, agent, task } = detail;
   const isAwaiting = run.runState === "AWAITING_HUMAN";
   const isBlocked = run.runState === "ESCALATED" || run.runState === "FAILED";
   const isDone = run.runState === "DONE" || run.runState === "CANCELLED";
+  const criteria = task?.acceptanceCriteria?.trim();
 
   return (
     <div className={`rd ${variant === "page" ? "rd-page" : ""}`}>
@@ -221,23 +259,24 @@ export function RunDetail({
           )}
         </div>
 
-        <div className="rd-section">Milestone timeline</div>
-        <Timeline run={run} />
-
-        {isAwaiting && run.diffStat && (
+        {criteria && (
           <>
-            <div className="rd-section">Evidence (before → after)</div>
-            <Evidence />
+            <div className="rd-section">Acceptance criteria</div>
+            <div className="criteria">{criteria}</div>
           </>
         )}
+
+        <div className="rd-section">Timeline</div>
+        <Timeline run={run} />
+
+        {run.review.rounds.length > 0 && <ReviewRounds rounds={run.review.rounds} maxRounds={run.review.maxRounds} />}
+        <VerificationSection run={run} />
 
         {isAwaiting && <ApprovalPanel run={run} />}
         {isBlocked && <BlockedPanel run={run} />}
         {isDone && (
           <div className="approval" style={{ background: "var(--good-tint)", borderColor: "color-mix(in srgb, var(--good) 26%, var(--border))" }}>
-            <h4 style={{ color: "var(--good)" }}>
-              {run.runState === "DONE" ? "Merged & closed" : "Aborted"}
-            </h4>
+            <h4 style={{ color: "var(--good)" }}>{run.runState === "DONE" ? "Merged & closed" : "Aborted"}</h4>
             <p className="approval-prov" style={{ marginBottom: 0 }}>
               {run.runState === "DONE"
                 ? `PR #${run.prNumber} was merged into ${run.targetBranch}. Nothing else needs you.`

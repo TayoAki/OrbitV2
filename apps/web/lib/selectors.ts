@@ -78,7 +78,7 @@ export interface BoardColumn {
 const BOARD_DEF: { key: string; label: string; states: RunStateName[] }[] = [
   { key: "todo", label: "To do", states: ["QUEUED"] },
   { key: "building", label: "Building", states: ["BUILDING"] },
-  { key: "review", label: "In review", states: ["REVIEWING", "REVIEW_FEEDBACK"] },
+  { key: "review", label: "In review", states: ["REVIEWING"] },
   { key: "approve", label: "Needs approval", states: ["AWAITING_HUMAN"] },
   { key: "blocked", label: "Blocked", states: ["ESCALATED", "FAILED"] },
   { key: "done", label: "Merged", states: ["MERGING", "DONE"] },
@@ -96,11 +96,19 @@ export interface RunDetailProjection {
   run: RunState;
   agent?: Member;
   requester?: Member;
-  /** Optimistic client-R8 pre-check — never the gate; server re-checks at approve. */
+  task?: import("./types").Task;
+  /**
+   * Optimistic client-R8 pre-check — NEVER the gate; the server re-runs this
+   * (fresh SHA, checks, review verdict, mergeability, authorization) at approve.
+   */
   approval: {
     ciGreen: boolean;
     reviewApproved: boolean;
-    noConflicts: boolean;
+    blockingComments: number;
+    noConflicts: boolean; // == mergeable
+    mergeable: boolean;
+    verificationOk: boolean;
+    machineReady: boolean;
     canApprove: boolean;
   };
 }
@@ -110,16 +118,24 @@ export function selectRunDetail(state: StoreState, runId: string): RunDetailProj
   if (!run) return null;
   const ciGreen = run.checks.state === "success";
   const reviewApproved = run.review.state === "approved";
-  const noConflicts = true; // fixture has no merge conflicts
+  const blockingComments = reviewApproved ? 0 : run.review.rounds[run.review.rounds.length - 1]?.blockingComments ?? 0;
+  const mergeable = run.mergeability === "MERGEABLE";
+  const verificationOk = run.verification.status === "NOT_REQUIRED" || run.verification.status === "PASSED";
+  const machineReady = ciGreen && reviewApproved && blockingComments === 0 && mergeable && verificationOk;
   return {
     run,
     agent: state.members[run.agentId],
     requester: state.members[run.requestedById],
+    task: state.tasks[run.taskId],
     approval: {
       ciGreen,
       reviewApproved,
-      noConflicts,
-      canApprove: run.runState === "AWAITING_HUMAN" && ciGreen && reviewApproved && noConflicts,
+      blockingComments,
+      noConflicts: mergeable,
+      mergeable,
+      verificationOk,
+      machineReady,
+      canApprove: run.runState === "AWAITING_HUMAN" && machineReady,
     },
   };
 }

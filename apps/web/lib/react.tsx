@@ -30,7 +30,7 @@ export interface AppApi {
   toasts: Toast[];
   toast: (text: string, tone?: ToastTone) => void;
   dismissToast: (id: number) => void;
-  startTask: (a: { repoId: string; title: string; agentId?: string }) => string;
+  startTask: (a: { repoId: string; title: string; acceptanceCriteria?: string; agentId?: string }) => string;
   approve: (runId: string) => void;
   requestChanges: (runId: string, note?: string) => void;
   continueRun: (runId: string) => void;

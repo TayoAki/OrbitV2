@@ -1,14 +1,41 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The local simulation engine. It stands in for the backend event tail: it plays
-// the fixture's `pending` timelines and action `scripts` as ordered events into
-// the store. In production this whole file is replaced by a resumable SSE reader;
-// the store/reducer/selectors above it never change.
+// The local simulation engine — the mock run driver + ordering authority. It
+// stands in for the backend event tail: it stamps every event with a global id
+// and a per-run seq, translates the fixture's `Step` scripts into TYPED domain
+// events, and applies them to the store. In production this whole file is
+// replaced by an SSE reader; the store/reducer/selectors above it never change.
+// (Rename target once the backend exists: MockRunDriver.)
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Store } from "./store";
 import { pendingTimelines, scripts as fixtureScripts } from "./store";
-import type { Step, RunState, Repo, Message, AgentConfig, StoreState } from "./types";
+import { stepKindToEventType } from "./labels";
+import type {
+  Step,
+  RunState,
+  Repo,
+  Task,
+  Message,
+  AgentConfig,
+  StoreState,
+  ShipEvent,
+  ShipEventType,
+  EventSource,
+  EventData,
+} from "./types";
 
 const FLASH_MS = 950;
+
+function sourceFor(type: ShipEventType): EventSource {
+  if (type.startsWith("ci.")) return "github";
+  if (type.startsWith("git.")) return "sandbox";
+  if (type.startsWith("review.")) return "review_provider";
+  if (type.startsWith("verification.")) return "sandbox";
+  if (type.startsWith("sandbox.")) return "workflow";
+  if (type.startsWith("human.")) return "human";
+  if (type === "pr.created" || type.startsWith("merge.") || type === "run.created") return "control_plane";
+  if (type === "run.escalated" || type === "run.resumed" || type === "run.cancelled") return "workflow";
+  return "agent";
+}
 
 export class SimEngine {
   private timers = new Set<ReturnType<typeof setTimeout>>();
@@ -16,12 +43,13 @@ export class SimEngine {
   private newCounter = 0;
   private msgCounter = 0;
   private repoCounter = 0;
+  private ordinal = 0; // global event id counter
+  private runSeq = new Map<string, number>(); // per-run seq
   private pending = pendingTimelines();
   private scripts = fixtureScripts();
 
   constructor(private store: Store, private clockSpeed = 1) {}
 
-  // Play every pending timeline whose repo is already connected.
   start() {
     const state = this.store.getSnapshot();
     for (const [runId, entry] of this.pending) {
@@ -32,8 +60,6 @@ export class SimEngine {
   stop() {
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
-    // Clear started too, so a re-mount (React StrictMode double-invoke in dev)
-    // replays pending timelines instead of early-returning and freezing.
     this.started.clear();
   }
 
@@ -42,18 +68,70 @@ export class SimEngine {
   }
 
   private now() {
-    return Date.now();
+    return new Date().toISOString();
+  }
+
+  /** Per-run seq that continues past any seeded events (avoids seq collisions
+   *  that would flash a stale timeline row). */
+  private nextSeq(runId: string): number {
+    if (!this.runSeq.has(runId)) {
+      const run = runId ? this.store.getSnapshot().runs[runId] : undefined;
+      const base = run ? run.events.reduce((mx, e) => Math.max(mx, e.seq), 0) : 0;
+      this.runSeq.set(runId, base);
+    }
+    const seq = (this.runSeq.get(runId) ?? 0) + 1;
+    this.runSeq.set(runId, seq);
+    return seq;
+  }
+
+  /** Stamp id + per-run seq + source, then apply. The store never invents seq. */
+  private emit(runId: string, type: ShipEventType, payload: EventData): ShipEvent {
+    this.ordinal += 1;
+    const seq = this.nextSeq(runId);
+    const ev: ShipEvent = {
+      id: `evt_${this.ordinal}`,
+      runId,
+      seq,
+      type,
+      source: sourceFor(type),
+      createdAt: this.now(),
+      payload,
+    };
+    return this.store.apply(ev);
   }
 
   private clearFlashSoon(runId: string) {
     const t = setTimeout(() => {
       this.timers.delete(t);
-      this.store.dispatch({ runId, type: "flash.clear", at: this.now(), payload: {} });
+      this.emit(runId, "flash.clear", {});
     }, FLASH_MS);
     this.timers.add(t);
   }
 
-  /** Run a sequence of steps against one run, honoring each step's delay. */
+  private interp(runId: string, note: string | undefined): string | undefined {
+    if (!note) return undefined;
+    const s = this.store.getSnapshot();
+    const run = s.runs[runId];
+    return note.replace(/\{repo\}/g, run?.repoSlug ?? "").replace(/\{pr\}/g, String(s.nextPr));
+  }
+
+  /** Translate one fixture Step into a typed event (type + structured payload). */
+  private stepEvent(runId: string, step: Step): { type: ShipEventType; payload: EventData } {
+    let type: ShipEventType;
+    if (step.to === "MERGING") type = "merge.started";
+    else if (step.to === "DONE") type = "merge.completed";
+    else if (step.to === "CANCELLED") type = "run.cancelled";
+    else type = stepKindToEventType(step.kind, step.to);
+
+    const payload: EventData = { toState: step.to, text: this.interp(runId, step.note) };
+    if (step.checks) payload.checks = step.checks;
+    if (step.review) payload.review = step.review;
+    if (type === "review.changes_requested") payload.blockingComments = 2;
+    // pr.created: leave prNumber unset so the reducer stays the PR-number authority;
+    // the {pr} in the note was interpolated with the same nextPr it will assign.
+    return { type, payload };
+  }
+
   private playSteps(runId: string, steps: Step[]) {
     if (this.started.has(runId)) return;
     this.started.add(runId);
@@ -63,7 +141,8 @@ export class SimEngine {
       const step = steps[i++];
       const t = setTimeout(() => {
         this.timers.delete(t);
-        this.store.dispatch({ runId, type: "step", at: this.now(), payload: { step } });
+        const { type, payload } = this.stepEvent(runId, step);
+        this.emit(runId, type, payload);
         this.clearFlashSoon(runId);
         runNext();
       }, this.scaled(step.in));
@@ -75,22 +154,33 @@ export class SimEngine {
   // ── Actions ────────────────────────────────────────────────────────────────
 
   connectRepo(repoId: string) {
-    this.store.dispatch({ runId: "", type: "repo.connected", at: this.now(), payload: { repoId } });
-    // Kick off any of this repo's pending timelines that haven't started yet.
+    this.emit("", "repo.connected", { repoId });
     for (const [runId, entry] of this.pending) {
       if (entry.repoId === repoId) this.playSteps(runId, entry.steps);
     }
   }
 
-  startTask(input: { repoId: string; title: string; agentId?: string }): string {
+  startTask(input: { repoId: string; title: string; acceptanceCriteria?: string; agentId?: string }): string {
     const state = this.store.getSnapshot();
     const repo = state.repos[input.repoId];
     if (!repo) return "";
     this.newCounter += 1;
     const id = `run_new_${this.newCounter}`;
+    const taskId = `task_new_${this.newCounter}`;
     const agentId = input.agentId ?? repo.agentId;
+
+    const task: Task = {
+      id: taskId,
+      source: { type: "orbit" },
+      repoId: repo.id,
+      description: input.title,
+      acceptanceCriteria: input.acceptanceCriteria?.trim() ?? "",
+      requestedById: state.currentUserId,
+      createdAt: this.now(),
+    };
     const run: RunState = {
       id,
+      taskId,
       title: input.title,
       runState: "QUEUED",
       agentId,
@@ -99,12 +189,15 @@ export class SimEngine {
       repoSlug: repo.slug,
       targetBranch: repo.defaultBranch,
       checks: { state: "pending" },
-      review: { state: "none" },
+      review: { state: "none", currentRound: 0, maxRounds: 3, rounds: [] },
+      verification: { status: "NOT_REQUIRED", attempts: [] },
+      mergeability: "MERGEABLE",
       diffStat: undefined,
+      escalation: undefined,
       ageMinutes: 0,
-      milestones: [{ kind: "pick", text: "Queued — waiting for an agent", atMinutes: 0 }],
+      events: [],
     };
-    this.store.dispatch({ runId: id, type: "created", at: this.now(), payload: { run } });
+    this.emit(id, "run.created", { run, task, text: "Queued — waiting for an agent" });
     this.clearFlashSoon(id);
     this.runScript(id, "newTask");
     return id;
@@ -114,8 +207,6 @@ export class SimEngine {
     this.runScript(runId, "approve");
   }
   requestChanges(runId: string, _note?: string) {
-    // _note would ride along to the agent in production; the script covers the
-    // visible "you requested changes" milestone here.
     this.restart(runId);
     this.runScript(runId, "requestChanges");
   }
@@ -127,33 +218,27 @@ export class SimEngine {
     this.runScript(runId, "abort");
   }
 
-  // ── Repos & agents ───────────────────────────────────────────────────────
+  // ── Repos & agents ─────────────────────────────────────────────────────────
 
   addRepo(input: { slug: string; defaultBranch?: string; agentId?: string }): string {
     const state = this.store.getSnapshot();
     this.repoCounter += 1;
     const id = `repo_new_${this.repoCounter}`;
     const agentId = input.agentId ?? Object.values(state.members).find((m) => m.kind === "agent")?.id ?? "agt_ship";
-    const repo: Repo = {
-      id,
-      slug: input.slug,
-      defaultBranch: input.defaultBranch ?? "main",
-      connected: true,
-      agentId,
-    };
-    this.store.dispatch({ runId: "", type: "repo.added", at: this.now(), payload: { repo } });
+    const repo: Repo = { id, slug: input.slug, defaultBranch: input.defaultBranch ?? "main", connected: true, agentId };
+    this.emit("", "repo.added", { repo });
     return id;
   }
 
   updateAgent(memberId: string, config: AgentConfig) {
-    this.store.dispatch({ runId: "", type: "agent.update", at: this.now(), payload: { memberId, config } });
+    this.emit("", "agent.update", { memberId, config });
   }
 
   updateOrg(orgName?: string, userName?: string) {
-    this.store.dispatch({ runId: "", type: "org.update", at: this.now(), payload: { orgName, userName } });
+    this.emit("", "org.update", { orgName, userName });
   }
 
-  // ── Threads ──────────────────────────────────────────────────────────────
+  // ── Threads ────────────────────────────────────────────────────────────────
 
   private newMsgId() {
     this.msgCounter += 1;
@@ -162,8 +247,6 @@ export class SimEngine {
 
   private parseMentions(text: string, state: StoreState): string[] {
     const handles = new Set<string>();
-    // Require a non-word char (or start) before '@' so emails / tokens like
-    // "ci@shipbot.dev" don't parse "@shipbot" as a mention and start a run.
     const re = /(?<![A-Za-z0-9_])@([a-z0-9_-]+)/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) handles.add(m[1].toLowerCase());
@@ -177,19 +260,10 @@ export class SimEngine {
   postMessage(channelId: string, text: string, scopeRepoId: string | null = null) {
     const state = this.store.getSnapshot();
     const mentions = this.parseMentions(text, state);
-    const msg: Message = {
-      id: this.newMsgId(),
-      channelId,
-      authorId: state.currentUserId,
-      at: 0,
-      text,
-      mentions,
-      kind: "text",
-    };
-    this.store.dispatch({ runId: "", type: "message.posted", at: this.now(), payload: { message: msg } });
+    const msg: Message = { id: this.newMsgId(), channelId, authorId: state.currentUserId, at: 0, text, mentions, kind: "text" };
+    this.emit("", "message.posted", { message: msg });
 
     const targets = new Set(mentions.filter((id) => state.members[id]?.kind === "agent"));
-    // A DM to an agent is directed even without an explicit @mention.
     const ch = state.channels.find((c) => c.id === channelId);
     if (ch?.kind === "dm") {
       const agentId = ch.memberIds.find((id) => state.members[id]?.kind === "agent");
@@ -201,7 +275,7 @@ export class SimEngine {
   private agentRespond(channelId: string, agentId: string, userText: string, scopeRepoId: string | null) {
     const post = (m: Omit<Message, "id" | "channelId" | "at" | "mentions">) => {
       const message: Message = { id: this.newMsgId(), channelId, at: 0, mentions: [], ...m };
-      this.store.dispatch({ runId: "", type: "message.posted", at: this.now(), payload: { message } });
+      this.emit("", "message.posted", { message });
     };
     const t1 = setTimeout(() => {
       this.timers.delete(t1);
@@ -225,7 +299,6 @@ export class SimEngine {
     this.timers.add(t1);
   }
 
-  /** Allow a run to be re-driven by a new script after a human action. */
   private restart(runId: string) {
     this.started.delete(runId);
   }
