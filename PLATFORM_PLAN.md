@@ -15,6 +15,7 @@ This plan was synthesized from five layer designs and two adversarial reviews �
 ---
 
 ## Table of contents
+0. [The three-plane model — start here](#0-the-three-plane-model--start-here)
 1. [The honest Nostr verdict — read this first](#1-the-honest-nostr-verdict)
 2. [The layer cake](#2-the-layer-cake)
 3. [The unified identity & trust model](#3-the-unified-identity--trust-model)
@@ -25,6 +26,66 @@ This plan was synthesized from five layer designs and two adversarial reviews �
 8. [Security of the combined surface](#8-security-of-the-combined-surface)
 9. [The roadmap — sequence by substrate risk](#9-the-roadmap)
 10. [Top risks](#10-top-risks)
+
+---
+
+## 0. The three-plane model — start here
+
+*§2's layer cake is the detailed version; this is the one picture the backend is built against. Same system, reframed around a single question per plane: **who's talking, who's in charge, who's doing the work.** Communication wants to be open, signed, and shared; work wants to be isolated, powerful, and ephemeral — so they live on different substrates, bridged by a control plane that holds all the authority.*
+
+```
+  COORDINATION PLANE  ── Nostr (private relay) ─────────────────────────────
+  humans + agents talk, delegate, and SIGN actions
+  identity = npub · channels/threads · @mention triggers · in-thread approvals
+  → the portable, signed audit trail: who asked, what ran, who approved
+        │  🟣 signed task: "@sara-bot fix #123"       ▲  🟣 agent-signed: "opened PR #841", "merged ✔"
+        ▼                                              │      + human-signed approval
+  CONTROL PLANE  ── Orbit servers (workspace gateway + shipRun) ─────────────
+  the bridge AND the authority — the only thing that speaks both Nostr + Postgres
+  verify sig → membership → npub↔GitHub binding → R8 · shipRun state machine ·
+  mint scoped GitHub token · open the PR · enforce the merge gate · sign + project events
+        │  🔵 scoped 1-h token + task                        ▲  🟢 internal run_events (full firehose)
+        ▼                                                    │
+  EXECUTION PLANE  ── sandbox + agent runtime SDK ──────────────────────────
+  the box that DOES the work: clone · edit · run · test · push
+  sandbox  = GitHub Codespace (v1: devcontainer-built) / microVM (E2B·Daytona, at scale)
+  runtime  = GitHub Copilot SDK / Claude Agent SDK  (or Cursor/Devin cloud agent)
+  gets only a short-lived, repo-scoped token — NEVER a signing key
+```
+
+| Plane | Answers | Substrate | Owns | Must never |
+|---|---|---|---|---|
+| **Coordination** | *who's talking?* | Nostr (private NIP-42/NIP-29 relay) | identity, messages, @mention triggers, in-thread approvals, the signed audit trail | hold run state, credentials, or execution; be a trust root |
+| **Control** | *who's in charge?* | Orbit servers · Postgres · KMS · GitHub App | authorization, `shipRun`, token minting, PR creation, the merge gate, projecting signed events | leak a signing key or a long-lived token into a lower plane |
+| **Execution** | *who's doing the work?* | sandbox (Codespace v1 / microVM) + agent runtime SDK | cloning, editing, running, testing, pushing — nothing above the git layer | ever hold a Nostr key or open the PR itself |
+
+This maps onto §2's layer cake exactly — **Coordination = TOP**, **Control = MIDDLE (`shipRun`) + the shared control plane**, **Execution = BOTTOM** — and overrides none of §5's frozen decisions; it's the mental model they hang on.
+
+**Execution-plane adapters are interchangeable — every one completes the same way: a GitHub PR.** Behind Interface 2 (`CodingAgent { dispatch, followUp, parse, cancel }`) sit our first-party sandbox running an **agent runtime SDK** — the **GitHub Copilot SDK** (the Copilot CLI runtime as an importable library: planning, tool calls, file edits, a permission handler, `ask_user`, MCP, BYOK) or the **Claude Agent SDK** — plus third-party **Cursor/Devin** cloud agents. The split is clean: **the sandbox is the isolated box; the runtime SDK is the agent loop inside it**, driven from the control plane and handed only a scoped, expiring token. The Copilot SDK's `onPermissionRequest` becomes a control-plane governance/audit gate, and its `ask_user` becomes a `run.escalated` event — the runtime never signs and never merges.
+
+**The sandbox lives behind a `SandboxProvider` interface — a GitHub Codespace is the leading v1 provider.** A codespace boots from the repo with the **devcontainer** pre-built (the devcontainer *is* the per-repo build/run/test runbook), and ships code-server so **Open Workspace is free**; a lean **microVM (E2B/Daytona)** is the alternative for cost/latency/scale and for orgs where Codespaces are disabled. Three integration facts to design around: (a) codespace *creation* uses an **OAuth App/PAT, not the GitHub App** (that scope is unavailable), so provisioning runs under a user-scoped token while the App token still handles repo ops + PR creation; (b) there is **no REST exec endpoint** — drive the runtime over SSH or by running the SDK's CLI server in the codespace and connecting via `forTcp`/`forUri`; (c) the Copilot runtime authenticates via device flow (hardened for Codespaces) or, inside a GitHub Actions job, the built-in `GITHUB_TOKEN` + `copilot-requests: write` — an even-lighter execution substrate to keep in reserve. All still require a Copilot subscription **or** BYOK.
+
+**The seam — where a message becomes a run, and a run becomes signed events** (full trace in §4):
+- **Ingress (Coordination → Control → Execution).** An authorized member's **signed @mention** hits the gateway → verify sig → npub↔org binding → **R8 GitHub repo-permission re-check** → dedupe on `event_id` → `startRun()` → dispatch to the bound execution adapter. *A signature proves who spoke, never what they may do* (§3).
+- **Egress (Execution → Control → Coordination).** The sandbox streams its full `run_events` to the control plane (and the in-app SSE); the gateway's **projection policy** publishes only the human-meaningful subset — signed by the **agent's npub** — back into the thread. ~5–15 events per run, never the shell firehose (§6).
+- **Exactly two on-relay events *drive* the system: the task and the approval** (both human-signed). Everything else is a projection *out*, so the relay is never a control channel an attacker can hijack.
+
+**Signed event kinds** (recorded in `nostr_event_index.role`):
+
+| Role | When | Nostr shape | Signed by |
+|---|---|---|---|
+| `trigger` | human delegates a task | kind-9 message, NIP-10 e-tag, p-tag the agent npub | **human** (NIP-07) |
+| `milestone` | run progress (working / PR opened / CI green / in review / needs approval) | kind-9, NIP-10 e-tag to the task; NIP-90 job shapes internally | **agent npub** (control-plane signer) |
+| `approval` | human approves the merge | signed reply e-tagged to the run | **human · approver-role · org-bound** |
+| `result` | merged / closed | kind-9 e-tag to the task, `sha256` of artifacts | **agent npub** |
+
+**Key custody, one line each** (full matrix §3):
+- **Human `nsec`** → non-custodial via **NIP-07** (bunker in Phase 3); the app never sees it. Proves *intent*.
+- **Agent `nsec`** → **control-plane signing service**, KMS-envelope-encrypted, signed in-memory (BIP-340), its own hardened trust boundary — **never in the sandbox**.
+- **Execution** → only a **short-lived, repo-scoped GitHub token**; no Nostr key, no long-lived secret.
+- **The merge is server-authoritative** — a signed approval is *evidence*; the control plane re-verifies the signer's GitHub push rights (R8) and performs the merge. *Signature gates intent; the scoped token gates execution; the human-approval hook gates irreversible actions.*
+
+**Sequencing:** the **Control + Execution** planes are the money loop — build them first (Phases 0–1, zero Nostr). The **Coordination** plane is the Phase-2 thin wrap: it makes humans and agents peers and turns the exchange into a signed, portable audit trail — but only pays off once real agents are doing real work to sign *about*.
 
 ---
 
@@ -82,7 +143,7 @@ The posture that falls out: **Nostr-native where it's genuinely ready; conventio
 **What each layer owns:**
 - **TOP owns coordination and identity, not truth.** It's where a human posts "fix issue #123", watches progress, and approves — and where an agent *appears* as a first-class member. It owns no run state, credentials, or execution. Deliberately a projection + trigger surface.
 - **MIDDLE owns the run.** Plan B's `shipRun` unchanged: dispatch a build, wait on CI + review, loop on feedback with iteration caps as the money ceiling, pause for a human. The only change is that one of its `CodingAgent` backends is now our own Plan-A agent.
-- **BOTTOM owns execution.** Plan A's sandbox + brain is now "the first-party coding agent"; Cursor/Devin sit beside it behind the same adapter. Every backend completes the same way: **a GitHub PR** — which is exactly what makes first-party and third-party agents interchangeable to the loop.
+- **BOTTOM owns execution.** Plan A's sandbox + brain is now "the first-party coding agent"; Cursor/Devin sit beside it behind the same adapter. Every backend completes the same way: **a GitHub PR** — which is exactly what makes first-party and third-party agents interchangeable to the loop. The first-party backend is now an **adopted runtime SDK (Copilot SDK / Claude ADK) running in a sandbox — a GitHub Codespace for v1, a microVM at scale** — not a hand-rolled loop (see §0 and the two new rows in §5); it narrows Plan A's scope to *sandbox + adapter*.
 
 **Two composition facts that must not be violated:**
 - **The workspace gateway is the *only* thing that speaks both Nostr and Postgres.** Keeping it a single bridge is what gives you one place to enforce `npub → org` authorization and one place to decide what gets projected out. (Collapsing TOP+MIDDLE by driving `shipRun` directly from relay events loses that and couples the loop to relay liveness — rejected.)
@@ -147,6 +208,8 @@ Tracing a single task (🟣 = on-relay Nostr event · 🔵 = Postgres/control-pl
 | **Agent signer** | bunker vs KMS-local | **Control-plane signing service**, nsec **KMS-envelope-encrypted, signed in-memory** (`@noble/secp256k1`) — because most KMS sign ECDSA, **not** the Schnorr/BIP-340 Nostr needs. **Never in the sandbox.** Treat the signer as its own hardened trust boundary. |
 | **Agent nsec + media** | in-sandbox blob-upload signing vs nsec-never-in-sandbox | **nsec never in sandbox wins.** Artifact **bytes** leave the VM to Blob; the **out-of-sandbox projector** signs + uploads. In-sandbox signing would let anyone with a shell forge the agent's identity workspace-wide. |
 | **PR creation** | sandbox opens PR vs control plane opens PR | **Control plane opens the PR**; the sandbox token is **push-only** (preserves Plan A's credential discipline). |
+| **Agent runtime** | hand-rolled `DurableAgent→Claude` loop vs adopt an SDK | **Adopt an agent-runtime SDK behind the `CodingAgent` adapter, not a hand-rolled loop.** **GitHub Copilot SDK** leads (the Copilot CLI runtime as a library — planning/tools/file-edits + `onPermissionRequest`→governance gate + `ask_user`→`run.escalated` + MCP + BYOK); **Claude Agent SDK** is the vendor-neutral fallback. Validate in the Phase-0 spike. Narrows Plan A to *sandbox + adapter*. *Requires a Copilot subscription or BYOK.* |
+| **Sandbox provider** | build our own microVM fleet vs managed | **One `SandboxProvider` interface; a GitHub Codespace is the leading v1 provider** — the **devcontainer** is the per-repo build/run/test runbook (repo pre-cloned) and code-server makes **Open Workspace free** — with a **microVM (E2B/Daytona)** alternative for cost/latency/scale and policy-blocked orgs. *Codespaces are created via **OAuth/PAT (not the App)** and driven via SSH / an in-codespace CLI server (no REST exec endpoint); the App token still does repo ops + PR.* |
 | **Threading** | NIP-10-on-kind-9 vs kind-1111 | **One helper.** Human message threads **and** agent milestone replies both use **NIP-10 marked e-tags on kind-9** so they co-thread; reserve 1111 for comments on non-message objects (files/results). |
 | **Correlation/dedupe** | webhook_deliveries+external_refs vs nostr_event_index | **`nostr_event_index`** = canonical event↔run correlation; **`webhook_deliveries` (source='nostr')** = dedupe only. One store, one order (dedupe → authorize → bind). |
 | **Repo abstraction** | RepositoryDriver vs GitHost+IssueTracker | **One `RepositoryDriver`** (clone/issues/proposal/verdict/merge); **GitHub-only** implementation in MVP. |
@@ -217,11 +280,11 @@ Everything else — GitHub token expiry discipline, egress default-deny, microVM
 **Standing rulings:** Postgres is the sole source of truth; GitHub Checks are the canonical verdict bus and Nostr status is strictly a mirror; `shipRun` ⇄ `agentSessionWorkflow` stay parent→child (never merged journals); all NIP encoding lives behind one `WorkspaceProtocol` adapter so a kind/NIP swap is localized.
 
 ### Phase 0 — Foundation freeze + substrate spike (no product)
-Stand up the shared control plane (Postgres/Neon, KMS, GitHub App, Clerk, WDK, OTel). Skeleton both engines: Plan A can boot a sandbox and the control plane can open a PR; Plan B's `shipRun` state machine skeleton. **Off-critical-path Nostr spike:** khatru + NIP-42 up; **VERIFY the real NIP-29 kinds and NIP-90 kinds on the actual build**; confirm KMS cannot BIP-340-sign → lock envelope-encrypt + in-memory-sign; publish one kind-0 from a Node signer; go/no-go on relay29 + team-bunker maturity.
+Stand up the shared control plane (Postgres/Neon, KMS, GitHub App, Clerk, WDK, OTel). Skeleton both engines: Plan A can boot a sandbox and the control plane can open a PR; Plan B's `shipRun` state machine skeleton. **Agent-runtime spike:** stand up a `CopilotAgentAdapter` over `@github/copilot-sdk` and run it in a **GitHub Codespace** (create via the Codespaces API → run the SDK → stream events out → control plane opens the PR); confirm the codespace token scope and Copilot auth (device flow / Actions `GITHUB_TOKEN` + `copilot-requests:write`). **Off-critical-path Nostr spike:** khatru + NIP-42 up; **VERIFY the real NIP-29 kinds and NIP-90 kinds on the actual build**; confirm KMS cannot BIP-340-sign → lock envelope-encrypt + in-memory-sign; publish one kind-0 from a Node signer; go/no-go on relay29 + team-bunker maturity.
 **Demo:** a control-plane-opened PR from a sandbox run + a one-page "verified kinds + signing design" memo. *No Nostr in the product path.*
 
 ### Phase 1 — The core money-loop, conventional surface (highest value, lowest substrate risk)
-Wire Plan A as the first-party `CodingAgent` under `shipRun` (parent→child by dispatch; PR webhook = completion). GitHub is the verdict bus: wait-agent → wait-ci → dispatch reviewer → wait-review → iteration caps + oscillation guard → `AWAITING_HUMAN` → wait-human → merge. **Trigger + approval via a conventional surface** (a web thread or REST endpoint); approval is a dashboard button gated by Clerk RBAC + the R8 repo-permission re-check. Control plane opens the PR; screenshots → Blob; reconcile cron.
+Wire Plan A as the first-party `CodingAgent` under `shipRun` (parent→child by dispatch; PR webhook = completion) — the first-party agent is now *wire the adopted runtime SDK (Copilot SDK) in a Codespace*, not a hand-rolled loop. GitHub is the verdict bus: wait-agent → wait-ci → dispatch reviewer → wait-review → iteration caps + oscillation guard → `AWAITING_HUMAN` → wait-human → merge. **Trigger + approval via a conventional surface** (a web thread or REST endpoint); approval is a dashboard button gated by Clerk RBAC + the R8 repo-permission re-check. Control plane opens the PR; screenshots → Blob; reconcile cron.
 **Demo:** a human files a task in the web UI, an agent builds in a sandbox, opens a PR, CI + CodeRabbit run, the human clicks Approve, it merges — fully durable and replayable, **zero Nostr.** The money loop, de-risked.
 
 ### Phase 2 — The thin Nostr wrap = the unified-vision MVP
