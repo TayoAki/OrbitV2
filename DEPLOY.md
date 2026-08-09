@@ -1,5 +1,20 @@
 # Deploying Orbit to Railway
 
+## Live deployment (Railway project `orbit`)
+
+| Service | URL | Status |
+| --- | --- | --- |
+| **orbit-api** (control plane) | https://orbit-api-production-df5e.up.railway.app | ✅ Postgres-backed; full ship-loop verified end-to-end (create → PR → CI → review → gate → approve → merge) |
+| **orbit-web** (console) | https://orbit-web-production-b441.up.railway.app | ✅ serving |
+| **Postgres** | private (`postgres.railway.internal`) | ✅ schema migrated + seeded on boot |
+
+Build is monorepo-via-upload: `railway up` uploads the repo root; each service's
+`dockerfilePath` selects `Dockerfile.api` / `Dockerfile.web` (root context, each
+copies only its own app). The control plane runs at **1 replica** (its in-memory
+locks + in-process outbox pump require a single instance).
+
+---
+
 Orbit is a monorepo with three deployable concerns:
 
 | Service | Source | Runtime | Notes |
@@ -19,18 +34,21 @@ railway init --name orbit        # creates the project, links this dir
 railway add -d postgres          # provisions managed Postgres
 ```
 
+> **Monorepo note.** `railway up` uploads the **repo root**, so each service is
+> pointed at a root-context Dockerfile via its `dockerfilePath`
+> (`Dockerfile.api` / `Dockerfile.web`) with an empty root directory. Set that once
+> per service (dashboard → Settings → Build, or the `serviceInstanceUpdate` GraphQL
+> mutation shown in the session). Then `railway up` from the repo root just works.
+
 ## Deploy the control plane (orbit-api)
 
 ```bash
-# create + link the service, then deploy apps/api
 railway add -s orbit-api
-railway service orbit-api
-# required + Postgres wiring (reference the Postgres service's DATABASE_URL)
-railway variables -s orbit-api \
-  --set "SHIPBOT_WEBHOOK_SECRET=$(openssl rand -hex 32)" \
-  --set 'DATABASE_URL=${{Postgres.DATABASE_URL}}' \
-  --set "DATABASE_SSL=true"
-railway up apps/api -s orbit-api -c        # build from the Dockerfile, stream logs
+railway variable set "SHIPBOT_WEBHOOK_SECRET=$(openssl rand -hex 32)" -s orbit-api --skip-deploys
+railway variable set 'DATABASE_URL=${{Postgres.DATABASE_URL}}'        -s orbit-api --skip-deploys
+railway variable set 'DATABASE_SSL=true'                             -s orbit-api --skip-deploys
+# one-time: set dockerfilePath=Dockerfile.api, rootDirectory="", healthcheckPath=/healthz, numReplicas=1
+railway up -s orbit-api -c                  # build from repo root, stream logs
 railway domain -s orbit-api                 # mint a public URL
 ```
 
@@ -43,9 +61,9 @@ On boot the API logs `store: postgres (migrated + seeded)` — the schema
 
 ```bash
 railway add -s orbit-web
-railway service orbit-web
-railway variables -s orbit-web --set "NEXT_PUBLIC_API_URL=https://<orbit-api-domain>"
-railway up apps/web -s orbit-web -c
+railway variable set "NEXT_PUBLIC_API_URL=https://<orbit-api-domain>" -s orbit-web --skip-deploys
+# one-time: set dockerfilePath=Dockerfile.web, rootDirectory="", healthcheckPath=/
+railway up -s orbit-web -c
 railway domain -s orbit-web
 ```
 
