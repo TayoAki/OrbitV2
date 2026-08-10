@@ -24,8 +24,22 @@
         {
           "id": "run_841", "title": "Stream chat responses instead of one blob", "runState": "AWAITING_HUMAN",
           "agentId": "agt_ship", "requestedById": "usr_dana", "prNumber": 841, "headSha": "3f9a1c2", "verdictId": "vd_841", "targetBranch": "main",
+          "runtime": "cursor",
           "checks": { "state": "success", "passed": 214, "total": 214 },
           "review": { "state": "approved", "rounds": 2, "reviewer": "CodeRabbit" },
+          "reviewRounds": [
+            { "round": 1, "status": "CHANGES_REQUESTED", "score": 4, "blockingComments": 1 },
+            { "round": 2, "status": "APPROVED", "score": 5, "blockingComments": 0 }
+          ],
+          "verify": {
+            "status": "PASSED",
+            "attempts": [
+              { "attempt": 1, "status": "PASSED",
+                "criteria": [ { "label": "Tokens stream incrementally", "ok": true }, { "label": "No full-blob fallback", "ok": true } ],
+                "evidence": [ { "id": "ev841_v", "type": "VIDEO", "url": "", "label": "stream.mp4" } ] }
+            ]
+          },
+          "prEvidence": [ { "id": "ev841_pr", "type": "VIDEO", "url": "", "label": "walkthrough.mp4" } ],
           "diffStat": { "additions": 142, "deletions": 38, "files": 6 },
           "ageMinutes": 4,
           "milestones": [
@@ -41,8 +55,25 @@
         {
           "id": "run_846", "title": "Add rate-limit headers to /export", "runState": "AWAITING_HUMAN",
           "agentId": "agt_fix", "requestedById": "usr_ravi", "prNumber": 846, "headSha": "b1e7d40", "verdictId": "vd_846", "targetBranch": "main",
+          "runtime": "copilot",
           "checks": { "state": "success", "passed": 88, "total": 88 },
-          "review": { "state": "approved", "rounds": 1, "reviewer": "CodeRabbit" },
+          "review": { "state": "approved", "rounds": 2, "reviewer": "CodeRabbit" },
+          "reviewRounds": [
+            { "round": 1, "status": "CHANGES_REQUESTED", "score": 3, "blockingComments": 2 },
+            { "round": 2, "status": "APPROVED", "score": 5, "blockingComments": 0 }
+          ],
+          "verify": {
+            "status": "PASSED",
+            "attempts": [
+              { "attempt": 1, "status": "FAILED",
+                "criteria": [ { "label": "Endpoint returns 200", "ok": true }, { "label": "X-RateLimit-* headers present", "ok": false } ],
+                "evidence": [ { "id": "ev846_s1", "type": "SCREENSHOT", "url": "", "label": "attempt 1" } ] },
+              { "attempt": 2, "status": "PASSED",
+                "criteria": [ { "label": "Endpoint returns 200", "ok": true }, { "label": "X-RateLimit-* headers present", "ok": true } ],
+                "evidence": [ { "id": "ev846_s2", "type": "SCREENSHOT", "url": "", "label": "attempt 2" }, { "id": "ev846_v", "type": "VIDEO", "url": "", "label": "verify.mp4" } ] }
+            ]
+          },
+          "prEvidence": [ { "id": "ev846_pr", "type": "VIDEO", "url": "", "label": "walkthrough.mp4" } ],
           "diffStat": { "additions": 47, "deletions": 4, "files": 3 },
           "ageMinutes": 12,
           "milestones": [
@@ -147,13 +178,25 @@
 
   "scripts": {
     "newTask": [
-      { "in": 1500, "to": "BUILDING", "note": "Picked up · cloning {repo} · reading the task", "kind": "pick" },
-      { "in": 3500, "to": "BUILDING", "note": "Edited the code · running the tests", "kind": "build" },
-      { "in": 3000, "to": "REVIEWING", "setPr": true, "note": "Opened PR #{pr}", "kind": "pr" },
-      { "in": 2500, "to": "REVIEWING", "checks": "success", "note": "CI green", "kind": "ci" },
-      { "in": 3000, "to": "BUILDING", "note": "Review round 1 — addressing 2 comments", "kind": "review" },
-      { "in": 3000, "to": "REVIEWING", "note": "Pushed fixes", "kind": "build" },
-      { "in": 2500, "to": "AWAITING_HUMAN", "review": "approved", "note": "Ready for approval", "kind": "ready" }
+      { "in": 1400, "to": "BUILDING", "kind": "pick", "runtime": "copilot", "note": "Picked up · cloning {repo} · planning the change" },
+      { "in": 2400, "to": "BUILDING", "kind": "build", "note": "BuildPhase — edited the code, ran the suite" },
+      { "in": 2400, "to": "REVIEWING", "setPr": true, "kind": "pr", "note": "Opened PR #{pr} · posted a walkthrough video",
+        "evidence": [ { "id": "evn_v1", "type": "VIDEO", "url": "", "label": "walkthrough.mp4" }, { "id": "evn_d1", "type": "SCREENSHOT", "url": "", "label": "before / after" } ] },
+      { "in": 2000, "checks": "success", "kind": "ci", "note": "CI green" },
+      { "in": 1800, "verify": "start", "attempt": 1, "note": "Testing — ComputerUse opened the app" },
+      { "in": 2300, "verify": "fail", "attempt": 1, "to": "BUILDING", "note": "EvaluateState — desired state not met",
+        "criteria": [ { "label": "Endpoint returns 200", "ok": true }, { "label": "X-RateLimit-* headers present", "ok": false } ],
+        "evidence": [ { "id": "evn_s1", "type": "SCREENSHOT", "url": "", "label": "attempt 1" } ] },
+      { "in": 2200, "kind": "refine", "note": "RefineCode — added the headers" },
+      { "in": 1600, "verify": "start", "attempt": 2, "note": "Testing — re-running ComputerUse" },
+      { "in": 2300, "verify": "pass", "attempt": 2, "to": "REVIEWING", "note": "EvaluateState — desired state met",
+        "criteria": [ { "label": "Endpoint returns 200", "ok": true }, { "label": "X-RateLimit-* headers present", "ok": true } ],
+        "evidence": [ { "id": "evn_s2", "type": "SCREENSHOT", "url": "", "label": "attempt 2" }, { "id": "evn_v2", "type": "VIDEO", "url": "", "label": "verify.mp4" } ] },
+      { "in": 2300, "to": "BUILDING", "kind": "review", "score": 3, "note": "CodeReviewAgent scored 3/5 — 2 comments" },
+      { "in": 2100, "kind": "refine", "note": "RefineCode — addressed the review" },
+      { "in": 1700, "to": "REVIEWING", "kind": "build", "note": "Pushed fixes" },
+      { "in": 2100, "kind": "review_ok", "score": 5, "note": "CodeReviewAgent scored 5/5 — approved" },
+      { "in": 1500, "to": "AWAITING_HUMAN", "kind": "ready", "note": "Ready for approval" }
     ],
     "approve": [
       { "in": 700, "to": "MERGING", "note": "Merging…", "kind": "build" },

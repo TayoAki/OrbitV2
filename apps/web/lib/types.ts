@@ -55,11 +55,20 @@ export type ReviewState = "approved" | "changes_requested" | "reviewing" | "none
 export interface ReviewRound {
   round: number;
   status: "APPROVED" | "CHANGES_REQUESTED";
-  score?: number;
+  score?: number; // diagram Loop 2: CodeReviewAgent score, X/5
   blockingComments: number;
   startedAt?: string;
   completedAt?: string;
   providerReviewId?: string;
+}
+
+/** Diagram phases — the run's coarse state maps to one of these for the stepper. */
+export type RunPhase = "FEATURE" | "PLANNING" | "BUILD" | "TESTING" | "PR" | "REVIEW" | "HUMAN" | "MERGED" | "BLOCKED";
+
+/** One acceptance-criterion result from EvaluateState (the desired-state check). */
+export interface CriterionResult {
+  label: string;
+  ok: boolean;
 }
 
 export interface Review {
@@ -90,6 +99,7 @@ export interface VerificationAttempt {
   startedAt?: string;
   completedAt?: string;
   evidence: EvidenceArtifact[];
+  criteria?: CriterionResult[]; // EvaluateState — which desired states were met
 }
 
 export interface Verification {
@@ -194,6 +204,11 @@ export interface EventData {
   prNumber?: number;
   headSha?: string;
   attempt?: number;
+  score?: number; // Loop 2: review score X/5
+  evidence?: EvidenceArtifact[]; // Post Video / verification artifacts
+  criteria?: CriterionResult[]; // EvaluateState per-criterion results
+  runtime?: string; // which cloud agent (Cursor / Cloud / Devin / Copilot) built it
+  phase?: RunPhase;
   escalation?: Escalation;
   mergeability?: Mergeability;
   // run.created carries the run + its task
@@ -263,11 +278,13 @@ export interface RunState {
   headSha?: string; // client-R8 binds to this
   verdictId?: string; // client-R8 binds to this
   targetBranch: string;
+  runtime?: string; // the cloud agent that executed the build (diagram: linear → MCP → runtime)
   checks: Checks;
   review: Review;
   verification: Verification;
   mergeability: Mergeability;
   diffStat?: DiffStat;
+  prEvidence?: EvidenceArtifact[]; // "Make PR & Post Video" — artifacts posted with the PR
   escalation?: Escalation;
   ageMinutes: number;
   events: RunEvent[]; // the per-run event log (was: milestones)
@@ -294,8 +311,12 @@ export interface McpServer {
   id?: string;
 }
 
+/** The cloud agent runtime that executes the build (diagram: Cursor / Cloud / Devin). */
+export type AgentRuntime = "copilot" | "cursor" | "cloud" | "devin" | "claude";
+
 export interface AgentConfig {
   model: string;
+  runtime?: AgentRuntime;
   acpVersion: string;
   maxSessions: number;
   relayUrl: string;
@@ -366,6 +387,13 @@ export interface Step {
   review?: ReviewState;
   note?: string;
   kind?: string;
+  // diagram-loop authoring (sim-only)
+  verify?: "start" | "pass" | "fail"; // Loop 1: Testing / ComputerUse / EvaluateState
+  score?: number; // Loop 2: review score X/5
+  attempt?: number;
+  evidence?: EvidenceArtifact[];
+  criteria?: CriterionResult[];
+  runtime?: string;
 }
 
 export interface StoreState {

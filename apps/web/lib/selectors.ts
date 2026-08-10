@@ -2,8 +2,39 @@
 // Projections. Every surface is a pure selector over one store. Zero surface-
 // local run state. (FRONTEND_PLAN §0: selectInbox / selectBoard / selectRunDetail)
 // ─────────────────────────────────────────────────────────────────────────────
-import type { StoreState, RunState, RunStateName, Member } from "./types";
+import type { StoreState, RunState, RunStateName, Member, RunPhase } from "./types";
 import { isInFlight, isBlocked, RUN_LABEL } from "./labels";
+
+/** Map the coarse run state (+ loop progress) to the diagram's named phase. */
+export function selectRunPhase(run: RunState): RunPhase {
+  const s = run.runState;
+  if (s === "DONE" || s === "MERGING") return "MERGED";
+  if (s === "ESCALATED" || s === "FAILED" || s === "CANCELLED") return "BLOCKED";
+  if (s === "AWAITING_HUMAN") return "HUMAN";
+  if (run.verification.status === "RUNNING") return "TESTING";
+  if (s === "REVIEWING") return "REVIEW";
+  if (s === "QUEUED") return "FEATURE";
+  if (!run.prNumber && run.events.length <= 2) return "PLANNING";
+  return "BUILD";
+}
+
+export interface LoopStatus {
+  testing: { attempts: number; status: RunState["verification"]["status"] };
+  review: { rounds: number; maxRounds: number; current: number; state: RunState["review"]["state"]; lastScore?: number };
+}
+export function selectLoops(run: RunState): LoopStatus {
+  const lastRound = run.review.rounds[run.review.rounds.length - 1];
+  return {
+    testing: { attempts: run.verification.attempts.length, status: run.verification.status },
+    review: {
+      rounds: run.review.rounds.length,
+      maxRounds: run.review.maxRounds,
+      current: run.review.currentRound,
+      state: run.review.state,
+      lastScore: lastRound?.score,
+    },
+  };
+}
 
 export interface InboxFilters {
   mineOnly?: boolean; // requested by or assigned to current user
@@ -97,6 +128,8 @@ export interface RunDetailProjection {
   agent?: Member;
   requester?: Member;
   task?: import("./types").Task;
+  phase: RunPhase;
+  loops: LoopStatus;
   /**
    * Optimistic client-R8 pre-check — NEVER the gate; the server re-runs this
    * (fresh SHA, checks, review verdict, mergeability, authorization) at approve.
@@ -127,6 +160,8 @@ export function selectRunDetail(state: StoreState, runId: string): RunDetailProj
     agent: state.members[run.agentId],
     requester: state.members[run.requestedById],
     task: state.tasks[run.taskId],
+    phase: selectRunPhase(run),
+    loops: selectLoops(run),
     approval: {
       ciGreen,
       reviewApproved,

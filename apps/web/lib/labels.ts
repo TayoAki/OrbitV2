@@ -122,11 +122,13 @@ export function describeEvent(ev: RunEvent): EventDisplay {
     case "review.started":
       return { label: "Review", detail: fallback || `Review round ${round ?? 1}`, dot: "" };
     case "review.approved":
-      return { label: "Review approved", detail: fallback || "Reviewer approved", dot: "good" };
+      return { label: "Review approved", detail: fallback || (d.score != null ? `Scored ${d.score}/5 — approved` : "Reviewer approved"), dot: "good" };
     case "review.changes_requested":
       return {
         label: "Changes requested",
-        detail: fallback || `${d.blockingComments ?? 0} blocking comment${(d.blockingComments ?? 0) === 1 ? "" : "s"} · round ${round ?? 1}`,
+        detail:
+          fallback ||
+          `${d.score != null ? `Scored ${d.score}/5 · ` : ""}${d.blockingComments ?? 0} blocking comment${(d.blockingComments ?? 0) === 1 ? "" : "s"} · round ${round ?? 1}`,
         dot: "warn",
       };
     case "revision.started":
@@ -169,6 +171,10 @@ export function stepKindToEventType(kind: string | undefined, toState?: RunState
       return "ci.passed";
     case "review":
       return "review.changes_requested";
+    case "review_ok":
+      return "review.approved";
+    case "refine":
+      return "revision.started";
     case "ready":
       return "human.approval_requested";
     case "merged":

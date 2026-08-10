@@ -4,20 +4,52 @@ import Link from "next/link";
 import { useApp, useAppState } from "@/lib/react";
 import { selectRunDetail } from "@/lib/selectors";
 import { describeEvent, ageLabel } from "@/lib/labels";
-import type { RunEvent, RunState, EscalationKind, ReviewRound, Escalation } from "@/lib/types";
+import type { RunEvent, RunState, EscalationKind, ReviewRound, Escalation, EvidenceArtifact } from "@/lib/types";
 import { Icon } from "./icons";
 import { StateChip, Avatar } from "./RunObject";
+import { PhaseStepper } from "./PhaseStepper";
 
 const ESCALATION_LABEL: Record<EscalationKind, string> = {
   CLARIFICATION: "Needs clarification",
   CREDENTIAL: "Missing credential",
   PERMISSION: "Needs permission",
   AUTHENTICATION: "Authentication required",
-  REVIEW_LIMIT: "Hit the review-round limit",
-  BUILD_LIMIT: "Hit the build-attempt limit",
+  REVIEW_LIMIT: "Hit the review-round limit (Loop 2)",
+  BUILD_LIMIT: "Hit the build-attempt limit (Loop 1)",
   EXTERNAL_FAILURE: "External failure",
   UNKNOWN: "Needs a human",
 };
+
+// A data-URI poster so evidence always renders (no external media / network).
+function posterFor(a: EvidenceArtifact): string {
+  const isVid = a.type === "VIDEO";
+  const label = (a.label ?? a.type).slice(0, 24);
+  const glyph = isVid
+    ? "<circle cx='160' cy='80' r='24' fill='#12a074'/><path d='M153 69 L153 91 L174 80 Z' fill='#fff'/>"
+    : "<rect x='126' y='58' width='68' height='46' rx='6' fill='none' stroke='#3aa07a' stroke-width='2'/><circle cx='160' cy='81' r='12' fill='none' stroke='#3aa07a' stroke-width='2'/>";
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='176'>` +
+    `<rect width='320' height='176' fill='#0e1622'/>${glyph}` +
+    `<text x='14' y='162' fill='#7f93a8' font-family='monospace' font-size='12'>${label}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function EvidenceGallery({ items, title }: { items?: EvidenceArtifact[]; title: string }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <>
+      <div className="rd-section">{title}</div>
+      <div className="evidence-row">
+        {items.map((a) => (
+          <div className="evidence-item" key={a.id}>
+            <img src={posterFor(a)} alt={a.label ?? a.type} />
+            <div className="evidence-cap">{a.type === "VIDEO" ? "▶ " : "◍ "}{a.label ?? a.type.toLowerCase()}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
 
 function Timeline({ run }: { run: RunState }) {
   return (
@@ -34,10 +66,7 @@ function Timeline({ run }: { run: RunState }) {
               {!last && <span className="tl-line" />}
             </div>
             <div className="tl-content">
-              <div className="tl-label">
-                {d.label}
-                <span className="when">{when}</span>
-              </div>
+              <div className="tl-label">{d.label}<span className="when">{when}</span></div>
               <div className="tl-detail">{d.detail}</div>
             </div>
           </div>
@@ -47,19 +76,24 @@ function Timeline({ run }: { run: RunState }) {
   );
 }
 
-function ReviewRounds({ rounds, maxRounds }: { rounds: ReviewRound[]; maxRounds: number }) {
+// Loop 2 — CodeReviewAgent scored review with RefineCode iterations.
+function ReviewRounds({ rounds, maxRounds, provider }: { rounds: ReviewRound[]; maxRounds: number; provider?: string }) {
   if (!rounds.length) return null;
   return (
     <>
-      <div className="rd-section">Review rounds ({rounds.length}/{maxRounds})</div>
+      <div className="rd-section loop-head">
+        Code review <span className="loop-badge">Loop 2 · {rounds.length}/{maxRounds}</span>
+        {provider && <span className="loop-badge">{provider}</span>}
+      </div>
       <div className="stack">
         {rounds.map((r) => (
           <div className="round-row" key={r.round}>
             <span className="round-n">Round {r.round}</span>
+            {r.score != null && <span className={`score-pill ${r.score >= 5 ? "score-good" : "score-warn"}`}>{r.score}/5</span>}
             {r.status === "APPROVED" ? (
               <span className="round-status good"><Icon name="check" size={13} /> Approved</span>
             ) : (
-              <span className="round-status warn">Changes requested · {r.blockingComments} blocking</span>
+              <span className="round-status warn">{r.blockingComments} blocking → RefineCode</span>
             )}
           </div>
         ))}
@@ -68,19 +102,46 @@ function ReviewRounds({ rounds, maxRounds }: { rounds: ReviewRound[]; maxRounds:
   );
 }
 
-function VerificationSection({ run }: { run: RunState }) {
+// Loop 1 — Testing: ComputerUse runs the app, EvaluateState checks the desired state.
+function TestingLoop({ run }: { run: RunState }) {
   const v = run.verification;
-  if (v.status === "NOT_REQUIRED" || v.attempts.length === 0) return null; // dormant in v1
+  if (v.status === "NOT_REQUIRED" || v.attempts.length === 0) return null;
   return (
     <>
-      <div className="rd-section">Functional verification</div>
+      <div className="rd-section loop-head">
+        Testing — functional verification <span className="loop-badge">Loop 1 · {v.attempts.length} attempt{v.attempts.length === 1 ? "" : "s"}</span>
+      </div>
       <div className="stack">
         {v.attempts.map((a) => (
-          <div className="round-row" key={a.id}>
-            <span className="round-n">Attempt {a.attempt}</span>
-            <span className={`round-status ${a.status === "PASSED" ? "good" : a.status === "FAILED" ? "crit" : ""}`}>
-              {a.status === "RUNNING" ? "Running…" : a.status === "PASSED" ? "Passed" : "Failed"}
-            </span>
+          <div className="round-row" key={a.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="round-n">Attempt {a.attempt}</span>
+              <span className="loop-badge">ComputerUse → EvaluateState</span>
+              <span className="spring" />
+              <span className={`round-status ${a.status === "PASSED" ? "good" : a.status === "FAILED" ? "crit" : ""}`}>
+                {a.status === "RUNNING" ? "Running…" : a.status === "PASSED" ? "Desired state met" : "State not achieved → retry"}
+              </span>
+            </div>
+            {a.criteria && a.criteria.length > 0 && (
+              <div className="crit-list">
+                {a.criteria.map((c, i) => (
+                  <div className="crit-item" key={i}>
+                    <span className={c.ok ? "crit-ok" : "crit-x"}><Icon name={c.ok ? "check" : "close"} size={13} /></span>
+                    {c.label}
+                  </div>
+                ))}
+              </div>
+            )}
+            {a.evidence && a.evidence.length > 0 && (
+              <div className="evidence-row">
+                {a.evidence.map((e) => (
+                  <div className="evidence-item" key={e.id}>
+                    <img src={posterFor(e)} alt={e.label ?? e.type} />
+                    <div className="evidence-cap">{e.type === "VIDEO" ? "▶ " : "◍ "}{e.label ?? e.type.toLowerCase()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -109,7 +170,7 @@ function ApprovalPanel({ run }: { run: RunState }) {
       <p className="approval-gate">{approval.machineReady ? "Machine gates passed — ready for your review." : "Waiting on machine gates."}</p>
       <div className="approval-checks">
         <span className={`acheck ${approval.ciGreen ? "" : "pending"}`}><Icon name="check" size={14} /> CI green</span>
-        <span className={`acheck ${approval.reviewApproved ? "" : "pending"}`}><Icon name="check" size={14} /> review approved</span>
+        <span className={`acheck ${approval.reviewApproved ? "" : "pending"}`}><Icon name="check" size={14} /> review 5/5</span>
         <span className={`acheck ${approval.mergeable ? "" : "pending"}`}><Icon name="check" size={14} /> no conflicts</span>
         {verificationRequired && (
           <span className={`acheck ${approval.verificationOk ? "" : "pending"}`}><Icon name="check" size={14} /> verified</span>
@@ -130,12 +191,7 @@ function ApprovalPanel({ run }: { run: RunState }) {
         </div>
       ) : (
         <div className="composer">
-          <textarea
-            autoFocus
-            placeholder="What should the agent change? Be specific — it goes straight to the run."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
+          <textarea autoFocus placeholder="What should the agent change? Be specific — it goes straight to the run." value={note} onChange={(e) => setNote(e.target.value)} />
           <div className="composer-actions">
             <button className="btn" onClick={() => setComposer(false)}>Cancel</button>
             <button className="btn btn-brand" onClick={send}>Send to agent</button>
@@ -149,15 +205,10 @@ function ApprovalPanel({ run }: { run: RunState }) {
 function BlockedPanel({ run }: { run: RunState }) {
   const app = useApp();
   const [hint, setHint] = useState("");
-  // FAILED runs can reach this panel without a structured escalation — give it a
-  // sensible fallback so the body is never empty.
   const esc: Escalation =
     run.escalation ?? {
       kind: run.runState === "FAILED" ? "EXTERNAL_FAILURE" : "UNKNOWN",
-      summary:
-        run.runState === "FAILED"
-          ? "This run failed and needs a human to decide next steps."
-          : "This run needs a human before it can continue.",
+      summary: run.runState === "FAILED" ? "This run failed and needs a human to decide next steps." : "This run needs a human before it can continue.",
       resumeFrom: "BUILDING",
     };
   return (
@@ -170,37 +221,18 @@ function BlockedPanel({ run }: { run: RunState }) {
       {esc.question && <p className="esc-question">{esc.question}</p>}
       {esc.token && <div className="token">{esc.token}</div>}
       <div className="composer" style={{ marginTop: 0, marginBottom: 10 }}>
-        <textarea
-          placeholder="Optional hint to unblock the agent (e.g. which approach to take)…"
-          value={hint}
-          onChange={(e) => setHint(e.target.value)}
-          style={{ minHeight: 60 }}
-        />
+        <textarea placeholder="Optional hint to unblock the agent (e.g. which approach to take)…" value={hint} onChange={(e) => setHint(e.target.value)} style={{ minHeight: 60 }} />
       </div>
-      <p className="approval-gate" style={{ margin: "0 0 10px" }}>
-        Continue resumes the run from <b>{esc?.resumeFrom ?? "BUILDING"}</b>.
-      </p>
+      <p className="approval-gate" style={{ margin: "0 0 10px" }}>Continue resumes the run from <b>{esc?.resumeFrom ?? "BUILDING"}</b>.</p>
       <div className="blocked-actions">
-        <button className="btn btn-brand" onClick={() => app.continueRun(run.id)}>
-          <Icon name="build" size={15} /> Continue
-        </button>
-        <button className="btn btn-danger" onClick={() => app.abortRun(run.id)}>
-          <Icon name="abort" size={15} /> Abort
-        </button>
+        <button className="btn btn-brand" onClick={() => app.continueRun(run.id)}><Icon name="build" size={15} /> Continue</button>
+        <button className="btn btn-danger" onClick={() => app.abortRun(run.id)}><Icon name="abort" size={15} /> Abort</button>
       </div>
     </div>
   );
 }
 
-export function RunDetail({
-  runId,
-  variant,
-  onClose,
-}: {
-  runId: string;
-  variant: "drawer" | "page";
-  onClose?: () => void;
-}) {
+export function RunDetail({ runId, variant, onClose }: { runId: string; variant: "drawer" | "page"; onClose?: () => void }) {
   const state = useAppState();
   const detail = selectRunDetail(state, runId);
   if (!detail) {
@@ -216,6 +248,7 @@ export function RunDetail({
   const isBlocked = run.runState === "ESCALATED" || run.runState === "FAILED";
   const isDone = run.runState === "DONE" || run.runState === "CANCELLED";
   const criteria = task?.acceptanceCriteria?.trim();
+  const linear = task?.source?.type === "linear" ? task.source : undefined;
 
   return (
     <div className={`rd ${variant === "page" ? "rd-page" : ""}`}>
@@ -225,24 +258,26 @@ export function RunDetail({
           <div className="rd-crumb">
             <span>agent</span>
             <span className="k">{agent?.handle}</span>
+            {run.runtime && <><span className="sep">·</span><span className="runtime-badge">{run.runtime} · MCP</span></>}
             <span className="sep">·</span>
             <span>{run.repoSlug}</span>
-            {run.prNumber && (
+            {run.prNumber && (<><span className="sep">·</span><span className="pr">PR #{run.prNumber}</span></>)}
+            {linear && (
               <>
                 <span className="sep">·</span>
-                <span className="pr">PR #{run.prNumber}</span>
+                {linear.externalUrl ? (
+                  <a className="source-badge" href={linear.externalUrl} target="_blank" rel="noreferrer">{linear.externalId ?? "Linear"} ↗</a>
+                ) : (
+                  <span className="source-badge">from Linear</span>
+                )}
               </>
             )}
           </div>
         </div>
         {variant === "drawer" && (
           <>
-            <Link href={`/runs/${run.id}`} className="icon-btn" title="Open full page">
-              <Icon name="external" size={16} />
-            </Link>
-            <button className="icon-btn" onClick={onClose} title="Close">
-              <Icon name="close" size={16} />
-            </button>
+            <Link href={`/runs/${run.id}`} className="icon-btn" title="Open full page"><Icon name="external" size={16} /></Link>
+            <button className="icon-btn" onClick={onClose} title="Close"><Icon name="close" size={16} /></button>
           </>
         )}
       </div>
@@ -259,9 +294,11 @@ export function RunDetail({
           )}
         </div>
 
+        <PhaseStepper run={run} />
+
         {criteria && (
           <>
-            <div className="rd-section">Acceptance criteria</div>
+            <div className="rd-section">Acceptance criteria <span className="muted" style={{ fontWeight: 400 }}>· the desired state</span></div>
             <div className="criteria">{criteria}</div>
           </>
         )}
@@ -269,8 +306,9 @@ export function RunDetail({
         <div className="rd-section">Timeline</div>
         <Timeline run={run} />
 
-        {run.review.rounds.length > 0 && <ReviewRounds rounds={run.review.rounds} maxRounds={run.review.maxRounds} />}
-        <VerificationSection run={run} />
+        <TestingLoop run={run} />
+        {run.review.rounds.length > 0 && <ReviewRounds rounds={run.review.rounds} maxRounds={run.review.maxRounds} provider={run.review.provider ?? run.review.reviewer} />}
+        <EvidenceGallery items={run.prEvidence} title="Posted with the PR" />
 
         {isAwaiting && <ApprovalPanel run={run} />}
         {isBlocked && <BlockedPanel run={run} />}

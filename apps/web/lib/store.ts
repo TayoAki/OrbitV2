@@ -22,6 +22,11 @@ import type {
   AgentConfig,
   Channel,
   Message,
+  ReviewRound,
+  VerificationAttempt,
+  VerificationStatus,
+  EvidenceArtifact,
+  CriterionResult,
 } from "./types";
 import { applyEvent } from "./reducer";
 import { stepKindToEventType } from "./labels";
@@ -30,6 +35,8 @@ import { stepKindToEventType } from "./labels";
 interface SeedReview { state: ReviewState; rounds?: number; reviewer?: string; }
 interface SeedMilestone { kind: string; text: string; atMinutes?: number; }
 interface SeedBlocked { summary: string; token?: string; rounds?: number; }
+interface SeedReviewRound { round: number; status: "APPROVED" | "CHANGES_REQUESTED"; score?: number; blockingComments?: number; }
+interface SeedVerify { status?: VerificationStatus; attempts: { attempt: number; status: "PASSED" | "FAILED" | "RUNNING"; criteria?: CriterionResult[]; evidence?: EvidenceArtifact[] }[]; }
 interface SeedRun {
   id: string;
   title: string;
@@ -40,8 +47,12 @@ interface SeedRun {
   headSha?: string;
   verdictId?: string;
   targetBranch: string;
+  runtime?: string;
   checks?: Checks;
   review?: SeedReview;
+  reviewRounds?: SeedReviewRound[];
+  verify?: SeedVerify;
+  prEvidence?: EvidenceArtifact[];
   diffStat?: DiffStat;
   blockedReason?: SeedBlocked;
   ageMinutes?: number;
@@ -94,6 +105,19 @@ function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
     atMinutes: m.atMinutes,
     data: { text: m.text },
   }));
+  const reviewRounds: ReviewRound[] = (seed.reviewRounds ?? []).map((r) => ({
+    round: r.round,
+    status: r.status,
+    score: r.score,
+    blockingComments: r.blockingComments ?? 0,
+  }));
+  const attempts: VerificationAttempt[] = (seed.verify?.attempts ?? []).map((a) => ({
+    id: `va_${seed.id}_${a.attempt}`,
+    attempt: a.attempt,
+    status: a.status,
+    criteria: a.criteria,
+    evidence: a.evidence ?? [],
+  }));
   return {
     id: seed.id,
     taskId: `task_${seed.id}`,
@@ -107,16 +131,18 @@ function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
     headSha: seed.headSha,
     verdictId: seed.verdictId,
     targetBranch: seed.targetBranch ?? repo.defaultBranch,
+    runtime: seed.runtime,
     checks: seed.checks ?? { state: "none" },
     review: {
       provider: seed.review?.reviewer,
       state: seed.review?.state ?? "none",
-      currentRound: seed.review?.rounds ?? 0,
+      currentRound: seed.review?.rounds ?? reviewRounds.length,
       maxRounds: 3,
       reviewer: seed.review?.reviewer,
-      rounds: [],
+      rounds: reviewRounds,
     },
-    verification: { status: "NOT_REQUIRED", attempts: [] },
+    verification: { status: seed.verify?.status ?? (attempts.length ? "PASSED" : "NOT_REQUIRED"), attempts },
+    prEvidence: seed.prEvidence,
     mergeability: "MERGEABLE",
     diffStat: seed.diffStat,
     escalation: seed.blockedReason
@@ -136,6 +162,7 @@ function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
 const AGENT_CONFIGS: Record<string, AgentConfig> = {
   agt_ship: {
     model: "claude-sonnet-4.5",
+    runtime: "copilot",
     acpVersion: "1.0",
     maxSessions: 8,
     relayUrl: "wss://relay.acme.dev",
@@ -148,6 +175,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
   },
   agt_fix: {
     model: "claude-haiku-4.5",
+    runtime: "cursor",
     acpVersion: "1.0",
     maxSessions: 4,
     relayUrl: "wss://relay.acme.dev",

@@ -1,11 +1,12 @@
 "use client";
 import React, { useMemo, useRef, useState } from "react";
 import { useApp, useAppState } from "@/lib/react";
-import type { AgentConfig, McpServer } from "@/lib/types";
+import type { AgentConfig, AgentRuntime, McpServer } from "@/lib/types";
 import { Icon } from "./icons";
 import { Avatar } from "./RunObject";
 
 const MODELS = ["claude-opus-4.8", "claude-sonnet-4.5", "claude-haiku-4.5", "gpt-5-codex", "local:qwen-coder"];
+const RUNTIMES: AgentRuntime[] = ["copilot", "cursor", "cloud", "devin", "claude"];
 
 // Editor for an agent's runtime config, modeled on the buzz-agent vision:
 // an ACP agent that calls an LLM and uses MCP tools, with a concurrency cap and
@@ -83,6 +84,13 @@ export function AgentEditor({ memberId, onClose }: { memberId: string; onClose: 
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             <div className="field-hint">Swapped with one env var in prod.</div>
+          </div>
+          <div className="field">
+            <label>Runtime</label>
+            <select value={cfg.runtime ?? "copilot"} onChange={(e) => set({ runtime: e.target.value as AgentRuntime })}>
+              {RUNTIMES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <div className="field-hint">The cloud agent that executes the build — reached over MCP.</div>
           </div>
           <div className="field">
             <label>Presence</label>

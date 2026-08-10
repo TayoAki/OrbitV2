@@ -118,7 +118,10 @@ export class SimEngine {
   /** Translate one fixture Step into a typed event (type + structured payload). */
   private stepEvent(runId: string, step: Step): { type: ShipEventType; payload: EventData } {
     let type: ShipEventType;
-    if (step.to === "MERGING") type = "merge.started";
+    if (step.verify === "start") type = "verification.started";
+    else if (step.verify === "pass") type = "verification.passed";
+    else if (step.verify === "fail") type = "verification.failed";
+    else if (step.to === "MERGING") type = "merge.started";
     else if (step.to === "DONE") type = "merge.completed";
     else if (step.to === "CANCELLED") type = "run.cancelled";
     else type = stepKindToEventType(step.kind, step.to);
@@ -126,7 +129,12 @@ export class SimEngine {
     const payload: EventData = { toState: step.to, text: this.interp(runId, step.note) };
     if (step.checks) payload.checks = step.checks;
     if (step.review) payload.review = step.review;
-    if (type === "review.changes_requested") payload.blockingComments = 2;
+    if (step.score != null) payload.score = step.score;
+    if (step.attempt != null) payload.attempt = step.attempt;
+    if (step.evidence) payload.evidence = step.evidence;
+    if (step.criteria) payload.criteria = step.criteria;
+    if (step.runtime) payload.runtime = step.runtime;
+    if (type === "review.changes_requested" && payload.blockingComments === undefined) payload.blockingComments = 2;
     // pr.created: leave prNumber unset so the reducer stays the PR-number authority;
     // the {pr} in the note was interpolated with the same nextPr it will assign.
     return { type, payload };
@@ -160,7 +168,7 @@ export class SimEngine {
     }
   }
 
-  startTask(input: { repoId: string; title: string; acceptanceCriteria?: string; agentId?: string }): string {
+  startTask(input: { repoId: string; title: string; acceptanceCriteria?: string; agentId?: string; runtime?: string; source?: Task["source"] }): string {
     const state = this.store.getSnapshot();
     const repo = state.repos[input.repoId];
     if (!repo) return "";
@@ -168,10 +176,12 @@ export class SimEngine {
     const id = `run_new_${this.newCounter}`;
     const taskId = `task_new_${this.newCounter}`;
     const agentId = input.agentId ?? repo.agentId;
+    const runtime = input.runtime ?? state.members[agentId]?.config?.runtime ?? "copilot";
+    const hasCriteria = !!input.acceptanceCriteria?.trim();
 
     const task: Task = {
       id: taskId,
-      source: { type: "orbit" },
+      source: input.source ?? { type: "orbit" },
       repoId: repo.id,
       description: input.title,
       acceptanceCriteria: input.acceptanceCriteria?.trim() ?? "",
@@ -188,9 +198,11 @@ export class SimEngine {
       repoId: repo.id,
       repoSlug: repo.slug,
       targetBranch: repo.defaultBranch,
+      runtime,
       checks: { state: "pending" },
       review: { state: "none", currentRound: 0, maxRounds: 3, rounds: [] },
-      verification: { status: "NOT_REQUIRED", attempts: [] },
+      // Loop 1 (Testing) is required when the task states a desired end-state.
+      verification: { status: hasCriteria ? "PENDING" : "NOT_REQUIRED", attempts: [] },
       mergeability: "MERGEABLE",
       diffStat: undefined,
       escalation: undefined,

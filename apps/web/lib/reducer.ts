@@ -50,9 +50,13 @@ function impliedState(type: string): RunStateName | undefined {
   }
 }
 
-function markLastAttempt(attempts: VerificationAttempt[], status: "PASSED" | "FAILED"): VerificationAttempt[] {
+function markLastAttempt(
+  attempts: VerificationAttempt[],
+  status: "PASSED" | "FAILED",
+  patch: Partial<VerificationAttempt> = {},
+): VerificationAttempt[] {
   if (!attempts.length) return attempts;
-  return attempts.map((a, i) => (i === attempts.length - 1 ? { ...a, status, completedAt: new Date().toISOString() } : a));
+  return attempts.map((a, i) => (i === attempts.length - 1 ? { ...a, status, completedAt: new Date().toISOString(), ...patch } : a));
 }
 
 /** Fold a run-scoped typed event into its run. */
@@ -98,7 +102,7 @@ function foldRun(state: StoreState, ev: ShipEvent): StoreState {
       next.review.currentRound = round;
       next.review.rounds = [
         ...next.review.rounds,
-        { round, status: "CHANGES_REQUESTED", blockingComments: p.blockingComments ?? 0, completedAt: ev.createdAt },
+        { round, status: "CHANGES_REQUESTED", score: p.score, blockingComments: p.blockingComments ?? 0, completedAt: ev.createdAt },
       ];
       break;
     }
@@ -106,7 +110,7 @@ function foldRun(state: StoreState, ev: ShipEvent): StoreState {
       const round = p.round ?? next.review.rounds.length + 1;
       next.review.state = "approved";
       next.review.currentRound = round;
-      next.review.rounds = [...next.review.rounds, { round, status: "APPROVED", blockingComments: 0, completedAt: ev.createdAt }];
+      next.review.rounds = [...next.review.rounds, { round, status: "APPROVED", score: p.score, blockingComments: 0, completedAt: ev.createdAt }];
       next.verdictId = next.verdictId ?? `vd_${next.id}`;
       break;
     }
@@ -128,12 +132,16 @@ function foldRun(state: StoreState, ev: ShipEvent): StoreState {
       break;
     }
     case "verification.passed":
-      next.verification = { status: "PASSED", attempts: markLastAttempt(next.verification.attempts, "PASSED") };
+      next.verification = { status: "PASSED", attempts: markLastAttempt(next.verification.attempts, "PASSED", { evidence: p.evidence, criteria: p.criteria }) };
       break;
     case "verification.failed":
-      next.verification = { status: "FAILED", attempts: markLastAttempt(next.verification.attempts, "FAILED") };
+      next.verification = { status: "FAILED", attempts: markLastAttempt(next.verification.attempts, "FAILED", { evidence: p.evidence, criteria: p.criteria }) };
       break;
   }
+
+  // ── "Post Video" + runtime (diagram: Make PR & Post Video; linear → MCP → runtime) ──
+  if (ev.type === "pr.created" && p.evidence) next.prEvidence = p.evidence;
+  if (p.runtime) next.runtime = p.runtime;
 
   // ── Mergeability & escalation ──
   if (p.mergeability) next.mergeability = p.mergeability;
