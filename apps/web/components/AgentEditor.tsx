@@ -90,7 +90,7 @@ export function AgentEditor({ memberId, onClose }: { memberId: string; onClose: 
             <select value={cfg.runtime ?? "copilot"} onChange={(e) => set({ runtime: e.target.value as AgentRuntime })}>
               {RUNTIMES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <div className="field-hint">The cloud agent that executes the build — reached over MCP.</div>
+            <div className="field-hint">The coding agent that does the work.</div>
           </div>
           <div className="field">
             <label>Presence</label>

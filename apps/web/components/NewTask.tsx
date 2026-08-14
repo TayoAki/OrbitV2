@@ -113,9 +113,9 @@ export function NewTaskModal({ repoId, onClose }: { repoId?: string; onClose: ()
               )}
 
               <div className="field">
-                <label>How will we know it&rsquo;s done? <span className="muted" style={{ fontWeight: 400 }}>· acceptance criteria (drives Testing)</span></label>
+                <label>How will we know it&rsquo;s done? <span className="muted" style={{ fontWeight: 400 }}>· what success looks like</span></label>
                 <textarea placeholder="e.g. Failed sends retry 3× with backoff; a test proves a transient 500 eventually succeeds" value={criteria} onChange={(e) => setCriteria(e.target.value)} style={{ minHeight: 56 }} />
-                <div className="field-hint">This is the desired state the Testing loop (ComputerUse → EvaluateState) will prove.</div>
+                <div className="field-hint">This is what the run has to prove before it asks for your approval.</div>
               </div>
 
               <div className="field" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -127,7 +127,7 @@ export function NewTaskModal({ repoId, onClose }: { repoId?: string; onClose: ()
                   </select>
                 </div>
                 <div>
-                  <label>Runtime <span className="muted" style={{ fontWeight: 400 }}>· via MCP</span></label>
+                  <label>Runtime <span className="muted" style={{ fontWeight: 400 }}>· the coding agent</span></label>
                   <select value={runtime} onChange={(e) => setRuntime(e.target.value as AgentRuntime | "")}>
                     <option value="">Agent default</option>
                     {RUNTIMES.map((r) => (<option key={r} value={r}>{r}</option>))}

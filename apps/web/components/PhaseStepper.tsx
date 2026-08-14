@@ -29,9 +29,9 @@ export function PhaseStepper({ run }: { run: RunState }) {
           const cur = !blocked && i === idx;
           const sub =
             p.key === "TESTING" && loops.testing.attempts > 0
-              ? `Loop 1 · ${loops.testing.attempts} attempt${loops.testing.attempts === 1 ? "" : "s"}`
+              ? `${loops.testing.attempts} attempt${loops.testing.attempts === 1 ? "" : "s"}`
               : p.key === "REVIEW" && loops.review.rounds > 0
-                ? `Loop 2 · ${loops.review.rounds}/${loops.review.maxRounds}${loops.review.lastScore != null ? ` · ${loops.review.lastScore}/5` : ""}`
+                ? `${loops.review.rounds}/${loops.review.maxRounds}${loops.review.lastScore != null ? ` · ${loops.review.lastScore}/5` : ""}`
                 : null;
           return (
             <React.Fragment key={p.key}>
@@ -45,7 +45,7 @@ export function PhaseStepper({ run }: { run: RunState }) {
           );
         })}
       </div>
-      {blocked && <div className="phase-blocked">Loop exhausted — escalated to a human</div>}
+      {blocked && <div className="phase-blocked">Stopped — needs a human</div>}
     </div>
   );
 }

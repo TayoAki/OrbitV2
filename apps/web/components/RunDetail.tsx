@@ -14,8 +14,8 @@ const ESCALATION_LABEL: Record<EscalationKind, string> = {
   CREDENTIAL: "Missing credential",
   PERMISSION: "Needs permission",
   AUTHENTICATION: "Authentication required",
-  REVIEW_LIMIT: "Hit the review-round limit (Loop 2)",
-  BUILD_LIMIT: "Hit the build-attempt limit (Loop 1)",
+  REVIEW_LIMIT: "Stopped after the review limit",
+  BUILD_LIMIT: "Stopped after too many attempts",
   EXTERNAL_FAILURE: "External failure",
   UNKNOWN: "Needs a human",
 };
@@ -82,7 +82,7 @@ function ReviewRounds({ rounds, maxRounds, provider }: { rounds: ReviewRound[]; 
   return (
     <>
       <div className="rd-section loop-head">
-        Code review <span className="loop-badge">Loop 2 · {rounds.length}/{maxRounds}</span>
+        Code review <span className="loop-badge">{rounds.length} of {maxRounds} rounds</span>
         {provider && <span className="loop-badge">{provider}</span>}
       </div>
       <div className="stack">
@@ -93,7 +93,7 @@ function ReviewRounds({ rounds, maxRounds, provider }: { rounds: ReviewRound[]; 
             {r.status === "APPROVED" ? (
               <span className="round-status good"><Icon name="check" size={13} /> Approved</span>
             ) : (
-              <span className="round-status warn">{r.blockingComments} blocking → RefineCode</span>
+              <span className="round-status warn">{r.blockingComments} to fix — revised</span>
             )}
           </div>
         ))}
@@ -109,17 +109,17 @@ function TestingLoop({ run }: { run: RunState }) {
   return (
     <>
       <div className="rd-section loop-head">
-        Testing — functional verification <span className="loop-badge">Loop 1 · {v.attempts.length} attempt{v.attempts.length === 1 ? "" : "s"}</span>
+        Checks — proving it works <span className="loop-badge">{v.attempts.length} attempt{v.attempts.length === 1 ? "" : "s"}</span>
       </div>
       <div className="stack">
         {v.attempts.map((a) => (
           <div className="round-row" key={a.id} style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span className="round-n">Attempt {a.attempt}</span>
-              <span className="loop-badge">ComputerUse → EvaluateState</span>
+              <span className="loop-badge">ran the app → checked the result</span>
               <span className="spring" />
               <span className={`round-status ${a.status === "PASSED" ? "good" : a.status === "FAILED" ? "crit" : ""}`}>
-                {a.status === "RUNNING" ? "Running…" : a.status === "PASSED" ? "Desired state met" : "State not achieved → retry"}
+                {a.status === "RUNNING" ? "Running…" : a.status === "PASSED" ? "Matched what you asked for" : "Didn't match — retried"}
               </span>
             </div>
             {a.criteria && a.criteria.length > 0 && (
@@ -258,7 +258,7 @@ export function RunDetail({ runId, variant, onClose }: { runId: string; variant:
           <div className="rd-crumb">
             <span>agent</span>
             <span className="k">{agent?.handle}</span>
-            {run.runtime && <><span className="sep">·</span><span className="runtime-badge">{run.runtime} · MCP</span></>}
+            {run.runtime && <><span className="sep">·</span><span className="runtime-badge">runs on {run.runtime}</span></>}
             <span className="sep">·</span>
             <span>{run.repoSlug}</span>
             {run.prNumber && (<><span className="sep">·</span><span className="pr">PR #{run.prNumber}</span></>)}
@@ -298,7 +298,7 @@ export function RunDetail({ runId, variant, onClose }: { runId: string; variant:
 
         {criteria && (
           <>
-            <div className="rd-section">Acceptance criteria <span className="muted" style={{ fontWeight: 400 }}>· the desired state</span></div>
+            <div className="rd-section">Acceptance criteria <span className="muted" style={{ fontWeight: 400 }}>· what done looks like</span></div>
             <div className="criteria">{criteria}</div>
           </>
         )}

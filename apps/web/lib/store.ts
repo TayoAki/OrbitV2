@@ -151,7 +151,7 @@ function seedToRun(seed: SeedRun, repo: SeedRepo): RunState {
           summary: seed.blockedReason.summary,
           token: seed.blockedReason.token,
           resumeFrom: "BUILDING",
-          question: "The agent stopped after the review-round cap. Continue with a hint, or abort?",
+          question: "The agent stopped after too many review rounds. Continue with a hint, or abort?",
         }
       : undefined,
     ageMinutes: seed.ageMinutes ?? 0,
