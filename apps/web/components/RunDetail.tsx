@@ -167,7 +167,7 @@ function ApprovalPanel({ run }: { run: RunState }) {
   return (
     <div className="approval">
       <h4>Approval panel</h4>
-      <p className="approval-gate">{approval.machineReady ? "Machine gates passed — ready for your review." : "Waiting on machine gates."}</p>
+      <p className="approval-gate">{approval.machineReady ? "Automated checks passed — ready for your review." : "Waiting on the automated checks."}</p>
       <div className="approval-checks">
         <span className={`acheck ${approval.ciGreen ? "" : "pending"}`}><Icon name="check" size={14} /> CI green</span>
         <span className={`acheck ${approval.reviewApproved ? "" : "pending"}`}><Icon name="check" size={14} /> review 5/5</span>

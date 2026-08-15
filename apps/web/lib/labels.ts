@@ -142,7 +142,7 @@ export function describeEvent(ev: RunEvent): EventDisplay {
     case "run.cancelled":
       return { label: "Aborted", detail: fallback || "Run aborted — branch & PR kept", dot: "idle" };
     case "human.approval_requested":
-      return { label: "Ready for you", detail: fallback || "All machine gates passed", dot: "warn" };
+      return { label: "Ready for you", detail: fallback || "All automated checks passed", dot: "warn" };
     case "human.changes_requested":
       return { label: "Changes requested", detail: fallback || "You sent it back to the agent", dot: "warn" };
     case "human.approved":
